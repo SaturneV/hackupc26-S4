@@ -384,6 +384,18 @@ async def chat_stream(session_id: str, user_id: str, body: ChatRequest):
     return StreamingResponse(_generate(), media_type="text/event-stream")
 
 
+@app.get("/session/{session_id}/negotiation-round")
+async def get_negotiation_round(session_id: str):
+    """Return the current negotiation round data (proposal message + responses)."""
+    session = db.get_session(session_id)
+    if not session:
+        raise HTTPException(404, "Session not found")
+    round_data = db.get_negotiation_round(session_id)
+    if not round_data:
+        raise HTTPException(404, "No negotiation round active")
+    return round_data
+
+
 @app.post("/session/{session_id}/negotiate")
 async def trigger_negotiation(session_id: str):
     """Detect conflicts and generate a negotiation message."""

@@ -19,7 +19,7 @@ export default function App() {
 
   if (page === 'debug')   return <Debug />
   if (page === 'chat')    return <Chat    sessionId={sessionId} userId={userId} onDone={() => go('waiting')} />
-  if (page === 'waiting') return <Waiting sessionId={sessionId} userId={userId} onResults={() => go('results')} />
+  if (page === 'waiting') return <Waiting sessionId={sessionId} userId={userId} onResults={() => go('results')} onNegotiate={() => go('chat')} />
   if (page === 'results') return <Results sessionId={sessionId} userId={userId} />
   return <Home onJoined={(sid, uid) => go('chat', sid, uid)} />
 }
