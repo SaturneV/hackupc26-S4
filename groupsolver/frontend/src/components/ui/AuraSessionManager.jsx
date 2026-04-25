@@ -3,7 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Users, UserPlus, ArrowRight, PlaneTakeoff, Loader2, Copy } from 'lucide-react';
 import clsx from 'clsx';
 
-const API = import.meta.env.VITE_API_URL;
+const API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+console.log('API URL:', API);
 
 export default function AuraSessionManager({ onJoined }) {
   const [mode, setMode] = useState('landing'); // 'landing' | 'create' | 'join'

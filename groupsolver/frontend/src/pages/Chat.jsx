@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import ChatBubble from '../components/ChatBubble.jsx'
 
-const API = import.meta.env.VITE_API_URL
+const API = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition
 const SS = window.speechSynthesis

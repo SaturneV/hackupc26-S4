@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import MemberStatus from '../components/MemberStatus.jsx'
 
-const API = import.meta.env.VITE_API_URL
+const API = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 export default function Waiting({ sessionId, userId, onResults, onNegotiate }) {
   const [session, setSession] = useState(null)

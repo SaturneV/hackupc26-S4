@@ -3,7 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Mic, Square, Loader2, Volume2, VolumeX, Send } from 'lucide-react';
 import clsx from 'clsx';
 
-const API = import.meta.env.VITE_API_URL;
+const API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+console.log('VoiceOverlay API URL:', API);
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const SS = window.speechSynthesis;
 const VOICE_SUPPORTED = !!(SR && SS);

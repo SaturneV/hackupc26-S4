@@ -8,7 +8,7 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
 })
 
-const API = import.meta.env.VITE_API_URL
+const API = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 const COORDS = {
   Lisbon: [38.7223, -9.1393], Porto: [41.1579, -8.6291],

@@ -15,10 +15,9 @@ def _ollama_chat(system: str, messages: list[dict], tools: list[dict] | None = N
         "model": MODEL,
         "messages": [{"role": "system", "content": system}] + messages,
         "stream": False,
-        "options": {"think": False},
     }
-    if tools:
-        payload["tools"] = tools
+    # Note: Gemma doesn't support tools/function calling, so we skip it
+    # Tools are only used by models that support them
     with httpx.Client(timeout=300) as client:
         r = client.post(f"{OLLAMA_URL}/api/chat", json=payload)
         r.raise_for_status()
@@ -35,7 +34,6 @@ def _ollama_stream(system: str, messages: list[dict]):
         "model": MODEL,
         "messages": [{"role": "system", "content": system}] + messages,
         "stream": True,
-        "options": {"think": False},
     }
     with httpx.Client(timeout=300) as client:
         with client.stream("POST", f"{OLLAMA_URL}/api/chat", json=payload) as r:
@@ -197,56 +195,15 @@ def chat_turn(
     complete = False
     reply_text = ""
 
-    # Agentic loop: keep going while the model wants to call tools
-    for _ in range(4):  # max 4 tool iterations per turn (3 fields + mark_complete)
-        response_msg = _ollama_chat(system, messages, tools=_COLLECTION_TOOLS)
-        tool_calls = response_msg.get("tool_calls", [])
-
-        if not tool_calls:
-            reply_text = response_msg.get("content", "").strip()
-            reply_text = _strip_comment_blocks(reply_text)
-            # Fallback: small models may not call tools, try to extract from text
-            if not partial and not complete:
-                partial.update(_extract_prefs_from_text(user_message, reply_text))
-            break
-
-        # Process each tool call
-        messages.append(response_msg)  # add assistant message with tool_calls
-
-        for call in tool_calls:
-            fn = call.get("function", {})
-            name = fn.get("name", "")
-            args = fn.get("arguments", {})
-            if isinstance(args, str):
-                try:
-                    args = json.loads(args)
-                except Exception:
-                    args = {}
-
-            tool_result = "ok"
-
-            if name == "save_preference":
-                field = args.get("field")
-                value = args.get("value")
-                if field and value is not None:
-                    partial[field] = value
-
-            elif name == "mark_complete":
-                complete = True
-                tool_result = "All preferences collected. Proceed to confirmation."
-
-            elif name == "ask_clarification":
-                # The question becomes the reply — we'll let the model reply naturally
-                tool_result = "Clarification question registered."
-
-            messages.append({
-                "role": "tool",
-                "content": tool_result,
-            })
-
-        if complete:
-            reply_text = "¡Perfecto, ya tengo todo lo que necesito! 🎉"
-            break
+    # Agentic loop: Gemma doesn't support tool calling, so skip directly to text extraction
+    for _ in range(1):  # Just one iteration since we can't use tools
+        # Don't pass tools to Gemma - it doesn't support them
+        response_msg = _ollama_chat(system, messages, tools=None)
+        reply_text = response_msg.get("content", "").strip()
+        reply_text = _strip_comment_blocks(reply_text)
+        # Extract preferences from the response text
+        partial.update(_extract_prefs_from_text(user_message, reply_text))
+        break
 
     # Build final preferences if complete
     merged = {**collected_so_far, **partial}

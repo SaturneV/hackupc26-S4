@@ -8,6 +8,8 @@ services:
     volumes:
       - ollama_data:/root/.ollama
     restart: unless-stopped
+    entrypoint: /bin/sh
+    command: -c "exec /usr/bin/ollama serve & sleep 10 && ollama pull gemma:2b && wait"
 
   backend:
     build: ./backend
@@ -15,7 +17,7 @@ services:
       - "8000:8000"
     environment:
       - OLLAMA_URL=http://ollama:11434
-      - OLLAMA_MODEL=mistral:7b
+      - OLLAMA_MODEL=gemma:2b
       - USE_MOCK_DB=${USE_MOCK_DB:-true}
       - SKYSCANNER_API_KEY=${SKYSCANNER_API_KEY:-}
       - FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID:-}
