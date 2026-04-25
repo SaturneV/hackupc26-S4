@@ -228,7 +228,7 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
               className="mb-6 w-full text-center bg-black/60 p-4 md:p-6 rounded-2xl backdrop-blur-md border border-white/10"
             >
               <p className="text-lg md:text-2xl text-white font-light tracking-wide text-shadow-sm leading-relaxed">
-                "{agentMessage}"
+                {agentMessage}
               </p>
             </motion.div>
           )}
