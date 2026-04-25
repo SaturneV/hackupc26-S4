@@ -2,6 +2,7 @@ import os
 import json
 import uuid
 from datetime import datetime
+from typing import Optional
 
 USE_MOCK_DB = os.getenv("USE_MOCK_DB", "false").lower() == "true"
 
@@ -35,7 +36,7 @@ def _get_db():
 def create_session(
     member_count: int,
     origin_city: str = "Madrid",
-    origin_coords: list | None = None,
+    origin_coords: Optional[list] = None,
     origin_iata: str = "MAD",
 ) -> str:
     session_id = str(uuid.uuid4())[:8].upper()
@@ -60,7 +61,7 @@ def create_session(
     return session_id
 
 
-def get_session(session_id: str) -> dict | None:
+def get_session(session_id: str) -> Optional[dict]:
     if USE_MOCK_DB:
         s = _mock.get(session_id)
         return s["_meta"] if s else None
@@ -68,7 +69,7 @@ def get_session(session_id: str) -> dict | None:
     return doc.to_dict() if doc.exists else None
 
 
-def join_session(session_id: str, username: str) -> str | None:
+def join_session(session_id: str, username: str) -> Optional[str]:
     user_id = str(uuid.uuid4())[:8]
     if USE_MOCK_DB:
         s = _mock.get(session_id)
@@ -108,7 +109,7 @@ def set_session_status(session_id: str, status: str):
 
 # ── Preferences ──────────────────────────────────────────────────────────────
 
-def get_preferences(session_id: str, user_id: str) -> dict | None:
+def get_preferences(session_id: str, user_id: str) -> Optional[dict]:
     if USE_MOCK_DB:
         s = _mock.get(session_id)
         return s["_prefs"].get(user_id) if s else None
@@ -177,7 +178,7 @@ def save_result(session_id: str, result: dict):
     )
 
 
-def get_result(session_id: str) -> dict | None:
+def get_result(session_id: str) -> Optional[dict]:
     if USE_MOCK_DB:
         s = _mock.get(session_id)
         return s["_result"] if s else None
@@ -206,7 +207,7 @@ def save_negotiation_round(session_id: str, round_data: dict):
     )
 
 
-def get_negotiation_round(session_id: str) -> dict | None:
+def get_negotiation_round(session_id: str) -> Optional[dict]:
     if USE_MOCK_DB:
         s = _mock.get(session_id)
         return s.get("_negotiation") if s else None

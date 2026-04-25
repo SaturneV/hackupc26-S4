@@ -1,6 +1,7 @@
 import os
 import httpx
 from datetime import date
+from typing import Optional
 
 SKYSCANNER_API_KEY = os.getenv("SKYSCANNER_API_KEY", "")
 
@@ -28,7 +29,7 @@ MOCK_DESTINATIONS = [
 ]
 
 
-def get_flights(origin: str = "MAD", depart_date: str | None = None,
+def get_flights(origin: str = "MAD", depart_date: Optional[str] = None,
                 budget: int = 9999) -> list[dict]:
     if not SKYSCANNER_API_KEY:
         return _mock_flights(budget, origin)

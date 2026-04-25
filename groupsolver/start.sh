@@ -6,7 +6,7 @@ echo "=== GroupSolver Quick Start ==="
 # Backend
 echo "[1/2] Starting FastAPI backend on http://localhost:8000"
 cd backend
-pip install -r requirements.txt -q
+pip3 install -r requirements.txt -q
 uvicorn main:app --reload --port 8000 &
 BACKEND_PID=$!
 cd ..

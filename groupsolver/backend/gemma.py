@@ -2,6 +2,7 @@ import os
 import re
 import json
 import httpx
+from typing import Optional
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")
@@ -77,7 +78,7 @@ Output ONLY this JSON (no markdown, no extra text):
 
 # ── JSON extraction ─────────────────────────────────────────────────────────
 
-def _extract_json(text: str) -> dict | None:
+def _extract_json(text: str) -> Optional[dict]:
     text = re.sub(r"```(?:json)?", "", text).strip()
     match = re.search(r"\{.*\}", text, re.DOTALL)
     if match:
@@ -88,7 +89,7 @@ def _extract_json(text: str) -> dict | None:
     return None
 
 
-def _extract_comment_block(text: str, tag: str) -> dict | None:
+def _extract_comment_block(text: str, tag: str) -> Optional[dict]:
     """Extract <!--TAG:{...}--> blocks from AI reply."""
     pattern = rf"<!--{tag}:(.*?)-->"
     match = re.search(pattern, text, re.DOTALL)
@@ -153,7 +154,7 @@ def chat_turn(
     history: list[dict],
     user_message: str,
     collected_so_far: dict,
-) -> tuple[str, dict | None, dict]:
+) -> tuple[str, Optional[dict], dict]:
     """
     Returns (reply_text, final_preferences_or_None, newly_extracted_partial_fields).
     reply_text has comment blocks stripped (clean for display).

@@ -2,6 +2,7 @@ import json
 import math
 import os
 from datetime import date
+from typing import Optional
 
 ICAO_FACTOR = 0.255  # kg CO2 per km per passenger
 
@@ -93,7 +94,7 @@ def _stdev(vals: list[float]) -> float:
 def group_decision(
     destinations: list[dict],
     all_member_prefs: dict,  # {uid: prefs_dict}
-    origin_coords: list[float] | None = None,
+    origin_coords: Optional[list[float]] = None,
 ) -> list[dict]:
     """
     Score every destination for every member.
@@ -139,7 +140,7 @@ def find_green_alternative(
     ranked: list[dict],
     winner: dict,
     min_avg_score: float = 70.0,
-) -> dict | None:
+) -> Optional[dict]:
     """Return lowest-CO2 dest with avg_score >= min_avg_score that isn't the winner."""
     candidates = [
         d for d in ranked
