@@ -26,7 +26,7 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
   useEffect(() => {
     if (!initialized.current) {
       initialized.current = true;
-      handleSend("Hola!"); // Trigger the AI to ask the first question
+      handleSend("Hello!"); // Trigger the AI to ask the first question
     }
   }, [sessionId, userId]);
 
@@ -77,8 +77,8 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
            const resultData = await resultRes.json();
            if (resultData.result && resultData.result.top_destinations) {
               onDestinationsUpdate(resultData.result.top_destinations);
-              setAgentMessage(resultData.result.recommendation || "Ja tenim els resultats per al grup!");
-              speakText(resultData.result.recommendation || "Ja tenim els resultats per al grup!");
+              setAgentMessage(resultData.result.recommendation || "We already have the results for the group!");
+              speakText(resultData.result.recommendation || "We already have the results for the group!");
               setSessionPhase('success');
               isPolling = false;
            }
@@ -123,8 +123,8 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
         
         setIsDone(true);
         setSessionPhase('collecting'); // It will go back to negotiating or success on the next poll
-        setAgentMessage("Resposta enviada. Esperant a la resta del grup...");
-        speakText("Resposta enviada. Esperant a la resta del grup...");
+        setAgentMessage("Response sent. Waiting for the rest of the group...");
+        speakText("Response sent. Waiting for the rest of the group...");
       } else {
         const res = await fetch(`${API}/session/${sessionId}/member/${userId}/chat`, {
           method: 'POST',
@@ -143,8 +143,8 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
       }
     } catch (err) {
       console.error(err);
-      setAgentMessage("Perdona, hi ha hagut un error de connexió.");
-      speakText("Perdona, hi ha hagut un error de connexió.");
+      setAgentMessage("Sorry, there was a connection error.");
+      speakText("Sorry, there was a connection error.");
     } finally {
       setLoading(false);
     }
@@ -170,7 +170,7 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
 
   const toggleListening = () => {
     if (!VOICE_SUPPORTED) {
-      alert("El teu navegador no suporta el micròfon. Pots utilitzar el teclat a sota.");
+      alert("Your browser does not support the microphone. You can use the keyboard below.");
       return;
     }
     try {
@@ -183,7 +183,7 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
       }
     } catch (err) {
       console.warn("Microphone access error:", err);
-      alert("Error en accedir al micròfon (pot ser per connexió no segura HTTP). Utilitza el teclat.");
+      alert("Error accessing the microphone (possibly due to insecure HTTP connection). Use the keyboard.");
       setListening(false);
     }
   };
@@ -240,7 +240,7 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
               exit={{ opacity: 0 }}
               className="mb-4 text-red-400 font-medium animate-pulse"
             >
-              Escoltant...
+              Listening...
             </motion.div>
           )}
         </AnimatePresence>
@@ -284,7 +284,7 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
                 type="text"
                 value={textInput}
                 onChange={e => setTextInput(e.target.value)}
-                placeholder="Escriu la teva resposta aquí..."
+                placeholder="Write your answer here..."
                 disabled={loading}
                 className="flex-1 bg-black/40 border border-white/20 rounded-full px-5 py-3 text-white focus:outline-none focus:ring-2 focus:ring-sky-500/50 backdrop-blur-md placeholder:text-slate-400 text-sm md:text-base"
               />
@@ -300,13 +300,13 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
 
           {isDone && sessionPhase !== 'success' && (
             <div className="text-emerald-400 text-sm font-medium bg-emerald-400/10 px-4 py-2 rounded-full border border-emerald-400/20 mt-2">
-              {sessionPhase === 'collecting' ? 'Preferències guardades! Esperant la resta del grup...' : 'Esperant la resta del grup...'}
+              {sessionPhase === 'collecting' ? 'Preferences saved! Waiting for the rest of the group...' : 'Waiting for the rest of the group...'}
             </div>
           )}
           
           {sessionPhase === 'success' && (
             <div className="text-emerald-400 text-sm font-medium bg-emerald-400/10 px-4 py-2 rounded-full border border-emerald-400/20 mt-2">
-              Destins trobats! Fes zoom al globus.
+              Destinations found! Zoom in on the globe.
             </div>
           )}
         </div>
