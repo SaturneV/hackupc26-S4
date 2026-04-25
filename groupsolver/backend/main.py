@@ -55,38 +55,110 @@ class NegotiateResponseRequest(BaseModel):
 _aggregating: set[str] = set()
 
 
-def _detect_conflicts(group_prefs: dict) -> list[str]:
-    """Simple conflict detection across member preferences."""
+def _detect_conflicts(group_prefs: dict, member_names: dict | None = None) -> list[str]:
+    """Detect conflicts across member preferences: dates, trip_type, budget."""
     conflicts = []
+    names = member_names or {}
     all_types = {}
     all_budgets = []
+    date_ranges = {}
 
     for uid, prefs in group_prefs.items():
         types = set(prefs.get("trip_type", []))
         budget = prefs.get("max_budget_flight", 0)
+        dates = prefs.get("available_dates", {})
         if types:
             all_types[uid] = types
         if budget:
-            all_budgets.append(budget)
+            all_budgets.append((uid, budget))
+        if dates and dates.get("start") and dates.get("end"):
+            try:
+                date_ranges[uid] = (
+                    date.fromisoformat(dates["start"]),
+                    date.fromisoformat(dates["end"]),
+                )
+            except ValueError:
+                pass
+
+    # Date conflict: no overlapping window across all members
+    if len(date_ranges) >= 2:
+        uids = list(date_ranges)
+        overlap_start = max(v[0] for v in date_ranges.values())
+        overlap_end = min(v[1] for v in date_ranges.values())
+        if overlap_start > overlap_end:
+            parts = []
+            for uid, (s, e) in date_ranges.items():
+                label = names.get(uid, uid)
+                parts.append(f"{label}: {s.strftime('%d %b')}–{e.strftime('%d %b')}")
+            conflicts.append(
+                f"Date mismatch — no common travel window: {', '.join(parts)}"
+            )
 
     # Type conflict: no common type across all members
     if len(all_types) >= 2:
         common = set.intersection(*all_types.values())
         if not common:
             type_list = ", ".join(
-                f"{uid}: {'/'.join(sorted(t))}" for uid, t in all_types.items()
+                f"{names.get(uid, uid)}: {'/'.join(sorted(t))}"
+                for uid, t in all_types.items()
             )
             conflicts.append(f"No overlapping travel type: {type_list}")
 
     # Budget conflict: spread > 50%
     if len(all_budgets) >= 2:
-        lo, hi = min(all_budgets), max(all_budgets)
+        budgets_only = [b for _, b in all_budgets]
+        lo, hi = min(budgets_only), max(budgets_only)
         if lo > 0 and (hi - lo) / lo > 0.5:
+            lo_name = names.get(next(uid for uid, b in all_budgets if b == lo), "")
+            hi_name = names.get(next(uid for uid, b in all_budgets if b == hi), "")
             conflicts.append(
-                f"Budget spread too wide: €{lo} vs €{hi} — using minimum €{lo}"
+                f"Budget spread too wide: {lo_name} €{lo} vs {hi_name} €{hi}"
             )
 
     return conflicts
+
+
+async def _check_and_proceed(session_id: str):
+    """Called when all members finish chat. Runs negotiation if conflicts, else aggregates."""
+    all_prefs_raw = db.get_all_preferences(session_id)
+    group = {
+        uid: p["preferences"]
+        for uid, p in all_prefs_raw.items()
+        if p.get("preferences")
+    }
+    member_names = {uid: p.get("username", uid) for uid, p in all_prefs_raw.items()}
+
+    conflicts = _detect_conflicts(group, member_names)
+
+    if conflicts:
+        members_for_ai = {
+            uid: {"name": member_names.get(uid, uid), "preferences": prefs}
+            for uid, prefs in group.items()
+        }
+
+        def _do_negotiate():
+            try:
+                return gemma.negotiate(members_for_ai, conflicts)
+            except Exception:
+                import traceback; traceback.print_exc()
+                return (
+                    "Hemos detectado incompatibilidades en las preferencias del grupo. "
+                    f"Problemas: {'; '.join(conflicts)}. "
+                    "Por favor, negociad y decidid si podéis ajustar vuestras preferencias."
+                )
+
+        message = await asyncio.get_event_loop().run_in_executor(None, _do_negotiate)
+
+        round_data = {
+            "round": 1,
+            "conflicts": conflicts,
+            "proposal_message": message,
+            "responses": {},
+        }
+        db.save_negotiation_round(session_id, round_data)
+        db.set_session_status(session_id, "negotiating")
+    else:
+        asyncio.create_task(_run_aggregation(session_id))
 
 
 async def _run_aggregation(session_id: str):
@@ -296,7 +368,7 @@ async def chat(session_id: str, user_id: str, body: ChatRequest):
     db.save_preferences(session_id, user_id, updates)
 
     if parsed_prefs and db.check_all_done(session_id):
-        asyncio.create_task(_run_aggregation(session_id))
+        asyncio.create_task(_check_and_proceed(session_id))
 
     return {"reply": reply, "done": bool(parsed_prefs)}
 
@@ -379,7 +451,7 @@ async def chat_stream(session_id: str, user_id: str, body: ChatRequest):
         db.save_preferences(session_id, user_id, updates)
 
         if parsed_prefs and db.check_all_done(session_id):
-            asyncio.create_task(_run_aggregation(session_id))
+            asyncio.create_task(_check_and_proceed(session_id))
 
     return StreamingResponse(_generate(), media_type="text/event-stream")
 

@@ -4,7 +4,7 @@ import json
 import httpx
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
-MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")
+MODEL = os.getenv("OLLAMA_MODEL", "qwen3:4b")
 
 # ── System prompts ──────────────────────────────────────────────────────────
 
@@ -36,7 +36,7 @@ When ALL 3 fields are collected, output ONLY this JSON and nothing else:
 Current collected data: {collected_so_far}"""
 
 
-NEGOTIATION_SYSTEM = """You are a group travel mediator. Your job is to resolve conflicts between group members' travel preferences.
+NEGOTIATION_SYSTEM = """You are a friendly group travel mediator. Your job is to explain travel preference conflicts to the group and help them reach a compromise.
 
 Group members and their preferences:
 {members_json}
@@ -44,17 +44,17 @@ Group members and their preferences:
 Conflicts detected:
 {conflicts_json}
 
-Your task:
-1. Address each member BY NAME
-2. Acknowledge what each person wants specifically
-3. Propose 1-2 "bridge destinations" that satisfy the most important needs of everyone
-4. Explain clearly WHY each destination works for EACH person
-5. Ask each member if they accept the proposal or want to counter-propose
+Your task — write a message TO THE GROUP that:
+1. Greets everyone warmly
+2. Points out the conflict clearly using each person's NAME (e.g. "Hey! We found that Ana wants to travel 13-16 April, but Jorge wants 12-30 June — these dates don't overlap at all!")
+3. Explains WHY this is a problem for finding a common trip
+4. Suggests a practical solution (e.g. find a middle ground date, or one person adjusts slightly)
+5. Asks each member by name if they'd be willing to adjust their preference and what alternative they can offer
 
-Be empathetic, specific, and constructive. Reference member names throughout.
+Be direct, warm, and conversational. Do NOT be vague — name specific dates, budgets, or trip types from their preferences.
 
-End your message with this structured block (no markdown):
-<!--PROPOSAL:{{"bridge_destinations":[],"conflict_summary":"","round":1}}-->"""
+End your message with this block (no markdown):
+<!--PROPOSAL:{{"conflict_summary":"","round":1}}-->"""
 
 
 AGGREGATION_SYSTEM = """You are a group travel optimizer.
