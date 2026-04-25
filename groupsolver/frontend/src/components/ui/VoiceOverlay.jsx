@@ -59,6 +59,7 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
   useEffect(() => {
     if (!initialized.current) {
       initialized.current = true;
+<<<<<<< HEAD
       const welcome = "Hey! Tell me when you're free to travel and what kind of trip you're into.";
       fetch(`${API}/session/${sessionId}`)
         .then(r => r.json())
@@ -77,6 +78,9 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
           setAgentMessage(welcome);
           speakWhenReady(welcome);
         });
+=======
+      handleSend("Hello!"); // Trigger the AI to ask the first question
+>>>>>>> 47372ad14d3e43923d8e5f4448c8509ac7cfef4c
     }
   }, [sessionId, userId]);
 
@@ -127,8 +131,13 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
            const resultData = await resultRes.json();
            if (resultData.result && resultData.result.top_destinations) {
               onDestinationsUpdate(resultData.result.top_destinations);
+<<<<<<< HEAD
               setAgentMessage(resultData.result.recommendation || "We found your perfect destination!");
               speakText(resultData.result.recommendation || "We found your perfect destination!");
+=======
+              setAgentMessage(resultData.result.recommendation || "We already have the results for the group!");
+              speakText(resultData.result.recommendation || "We already have the results for the group!");
+>>>>>>> 47372ad14d3e43923d8e5f4448c8509ac7cfef4c
               setSessionPhase('success');
               isPolling = false;
            }
@@ -172,9 +181,15 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
         if (!res.ok) throw new Error(await res.text());
 
         setIsDone(true);
+<<<<<<< HEAD
         setSessionPhase('collecting');
         setAgentMessage("Response sent. Waiting for the other person...");
         speakText("Response sent. Waiting for the other person...");
+=======
+        setSessionPhase('collecting'); // It will go back to negotiating or success on the next poll
+        setAgentMessage("Response sent. Waiting for the rest of the group...");
+        speakText("Response sent. Waiting for the rest of the group...");
+>>>>>>> 47372ad14d3e43923d8e5f4448c8509ac7cfef4c
       } else {
         const res = await fetch(`${API}/session/${sessionId}/member/${userId}/chat`, {
           method: 'POST',
@@ -220,7 +235,11 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
 
   const toggleListening = () => {
     if (!VOICE_SUPPORTED) {
+<<<<<<< HEAD
       alert("Your browser doesn't support the microphone. Use the text input below.");
+=======
+      alert("Your browser does not support the microphone. You can use the keyboard below.");
+>>>>>>> 47372ad14d3e43923d8e5f4448c8509ac7cfef4c
       return;
     }
     try {
@@ -233,7 +252,11 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
       }
     } catch (err) {
       console.warn("Microphone access error:", err);
+<<<<<<< HEAD
       alert("Microphone error (possibly insecure HTTP connection). Use the text input instead.");
+=======
+      alert("Error accessing the microphone (possibly due to insecure HTTP connection). Use the keyboard.");
+>>>>>>> 47372ad14d3e43923d8e5f4448c8509ac7cfef4c
       setListening(false);
     }
   };
@@ -328,7 +351,7 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
               className="mb-6 w-full text-center bg-black/60 p-4 md:p-6 rounded-2xl backdrop-blur-md border border-white/10"
             >
               <p className="text-lg md:text-2xl text-white font-light tracking-wide text-shadow-sm leading-relaxed">
-                "{agentMessage}"
+                {agentMessage}
               </p>
             </motion.div>
           ) : null}
@@ -412,7 +435,11 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
                 type="text"
                 value={textInput}
                 onChange={e => setTextInput(e.target.value)}
+<<<<<<< HEAD
                 placeholder="Type your answer here..."
+=======
+                placeholder="Write your answer here..."
+>>>>>>> 47372ad14d3e43923d8e5f4448c8509ac7cfef4c
                 disabled={loading}
                 className="flex-1 bg-black/40 border border-white/20 rounded-full px-5 py-3 text-white focus:outline-none focus:ring-2 focus:ring-sky-500/50 backdrop-blur-md placeholder:text-slate-400 text-sm md:text-base"
               />
@@ -428,13 +455,21 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
 
           {isDone && sessionPhase !== 'success' && (
             <div className="text-emerald-400 text-sm font-medium bg-emerald-400/10 px-4 py-2 rounded-full border border-emerald-400/20 mt-2">
+<<<<<<< HEAD
               {sessionPhase === 'collecting' ? 'Preferences saved! Waiting for the other person...' : 'Waiting for the other person...'}
+=======
+              {sessionPhase === 'collecting' ? 'Preferences saved! Waiting for the rest of the group...' : 'Waiting for the rest of the group...'}
+>>>>>>> 47372ad14d3e43923d8e5f4448c8509ac7cfef4c
             </div>
           )}
 
           {sessionPhase === 'success' && (
             <div className="text-emerald-400 text-sm font-medium bg-emerald-400/10 px-4 py-2 rounded-full border border-emerald-400/20 mt-2">
+<<<<<<< HEAD
               Destination found! Zoom in on the globe.
+=======
+              Destinations found! Zoom in on the globe.
+>>>>>>> 47372ad14d3e43923d8e5f4448c8509ac7cfef4c
             </div>
           )}
         </div>
