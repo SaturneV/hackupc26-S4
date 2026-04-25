@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import ChatBubble from '../components/ChatBubble.jsx'
 
 const API = import.meta.env.VITE_API_URL
@@ -16,67 +16,96 @@ function speak(text, lang = 'es-ES') {
   SS.speak(utt)
 }
 
-// Props:
-//   sessionId, userId, onDone — always required
-//   negotiationMessage — if set, component starts in negotiation mode (no greeting)
-export default function Chat({ sessionId, userId, onDone, negotiationMessage }) {
-  const isNegotiationMode = !!negotiationMessage
-
-  const [messages, setMessages] = useState(() =>
-    isNegotiationMode
-      ? [{ role: 'assistant', text: negotiationMessage }]
-      : []
-  )
+export default function Chat({ sessionId, userId, onDone }) {
+  const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
-  const [done, setDone] = useState(false)          // finished this phase
-  const [negotiating, setNegotiating] = useState(isNegotiationMode)
+  const [done, setDone] = useState(false)
+  const [negotiating, setNegotiating] = useState(false)
+  const [negotiationShown, setNegotiationShown] = useState(false)
 
-  const [voiceOn, setVoiceOn] = useState(true)
-  const [listening, setListening] = useState(false)
+  // Voice state
+  const [voiceOn, setVoiceOn] = useState(true)       // TTS auto-play toggle
+  const [listening, setListening] = useState(false)   // microphone active
+  const [noSupport, setNoSupport] = useState(false)
 
   const bottomRef = useRef(null)
-  const greetedRef = useRef(isNegotiationMode)     // skip greeting if negotiation mode
-  const srRef = useRef(null)
-  const sendMessageRef = useRef(null)
+  const greetedRef = useRef(false)
+  const srRef = useRef(null)                           // SpeechRecognition instance
+  const sendMessageRef = useRef(null)                  // always-current sendMessage ref
 
-  // ── greeting (normal mode only) ──────────────────────────────────────────────
+  // ── helpers ─────────────────────────────────────────────────────────────────
+
+  const addBotMessage = useCallback((text) => {
+    setMessages(prev => [...prev, { role: 'assistant', text }])
+    if (voiceOn) speak(text)
+  }, [voiceOn])
+
+  // ── init greeting ────────────────────────────────────────────────────────────
+
   useEffect(() => {
     if (greetedRef.current) return
     greetedRef.current = true
     sendMessage('Hello!')
   }, [])
 
-  // speak negotiation message on mount if voice is on
-  useEffect(() => {
-    if (isNegotiationMode && voiceOn) speak(negotiationMessage)
-  }, [])
-
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  // ── TTS helper ───────────────────────────────────────────────────────────────
-  const addBotMessage = (text) => {
-    setMessages(prev => [...prev, { role: 'assistant', text }])
-    if (voiceOn) speak(text)
+  // ── negotiation poll ─────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    if (!done) return
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`${API}/session/${sessionId}`)
+        if (!res.ok) return
+        const data = await res.json()
+        if (data.status === 'negotiating') {
+          clearInterval(interval)
+          await loadNegotiationRound()
+        } else if (data.status === 'done' || data.status === 'error') {
+          clearInterval(interval)
+          onDone()
+        }
+      } catch (_) {}
+    }, 3000)
+    return () => clearInterval(interval)
+  }, [done, sessionId])
+
+  const loadNegotiationRound = async () => {
+    if (negotiationShown) return
+    try {
+      const res = await fetch(`${API}/session/${sessionId}/negotiation-round`)
+      if (!res.ok) return
+      const data = await res.json()
+      if (data.proposal_message) {
+        setNegotiating(true)
+        setNegotiationShown(true)
+        setDone(false)
+        const text = `Negociación necesaria.\n\n${data.proposal_message}\n\nCuéntanos tu opinión sobre este compromiso.`
+        addBotMessage(text)
+      }
+    } catch (_) {}
   }
 
-  // ── keep sendMessage ref fresh ───────────────────────────────────────────────
-  useEffect(() => { sendMessageRef.current = sendMessage })
+  // ── voice: microphone ────────────────────────────────────────────────────────
 
-  // ── microphone ───────────────────────────────────────────────────────────────
   const startListening = () => {
-    if (!SR) return
+    if (!SR) { setNoSupport(true); return }
     if (listening) { srRef.current?.stop(); return }
+
     const sr = new SR()
     srRef.current = sr
     sr.lang = 'es-ES'
     sr.interimResults = false
     sr.maxAlternatives = 1
+
     sr.onstart = () => setListening(true)
     sr.onend = () => setListening(false)
     sr.onerror = () => setListening(false)
+
     sr.onresult = (e) => {
       const transcript = e.results[0][0].transcript.trim()
       if (transcript) {
@@ -84,39 +113,44 @@ export default function Chat({ sessionId, userId, onDone, negotiationMessage }) 
         sendMessageRef.current?.(transcript)
       }
     }
+
     sr.start()
   }
-  useEffect(() => () => srRef.current?.abort(), [])
 
-  // ── send logic ───────────────────────────────────────────────────────────────
-  const sendMessage = async (text) => {
-    if (!text?.trim() || loading || done) return
+  // Keep ref pointing to latest sendMessage so SR onresult never calls a stale closure
+  useEffect(() => { sendMessageRef.current = sendMessage })
 
-    if (negotiating) {
-      // negotiation-response path
-      setMessages(prev => [...prev, { role: 'user', text }])
-      setInput('')
-      setLoading(true)
-      try {
-        const res = await fetch(`${API}/session/${sessionId}/member/${userId}/negotiate-response`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ response: text }),
-        })
-        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText)
-        addBotMessage('¡Gracias! Hemos registrado tu respuesta. Esperando al resto del grupo...')
-        setNegotiating(false)
-        setDone(true)
-        setTimeout(onDone, 1500)
-      } catch (e) {
-        addBotMessage(`Error: ${e.message}. Inténtalo de nuevo.`)
-      } finally {
-        setLoading(false)
-      }
-      return
+  // Stop SR if component unmounts mid-listen
+  useEffect(() => () => { srRef.current?.abort() }, [])
+
+  // ── chat send ────────────────────────────────────────────────────────────────
+
+  const sendNegotiateResponse = async (text) => {
+    setMessages(prev => [...prev, { role: 'user', text }])
+    setInput('')
+    setLoading(true)
+    try {
+      const res = await fetch(`${API}/session/${sessionId}/member/${userId}/negotiate-response`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ response: text }),
+      })
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText)
+      addBotMessage('¡Gracias! Esperando la respuesta de los demás miembros...')
+      setNegotiating(false)
+      setDone(true)
+    } catch (e) {
+      addBotMessage(`Error: ${e.message}. Inténtalo de nuevo.`)
+    } finally {
+      setLoading(false)
     }
+  }
 
-    // normal chat path
+  const sendMessage = async (text) => {
+    if (!text?.trim() || loading) return
+
+    if (negotiating) return sendNegotiateResponse(text)
+
     if (text !== 'Hello!') {
       setMessages(prev => [...prev, { role: 'user', text }])
     }
@@ -137,7 +171,7 @@ export default function Chat({ sessionId, userId, onDone, negotiationMessage }) 
       addBotMessage(data.reply)
       if (data.done) {
         setDone(true)
-        setTimeout(onDone, 1500)
+        setTimeout(onDone, 2000)
       }
     } catch (e) {
       addBotMessage(`Error: ${e.message}. Inténtalo de nuevo.`)
@@ -147,52 +181,64 @@ export default function Chat({ sessionId, userId, onDone, negotiationMessage }) 
   }
 
   // ── derived UI ───────────────────────────────────────────────────────────────
+
   const badge = negotiating
-    ? { color: 'bg-yellow-500', text: '⚠️ Conflicto detectado' }
+    ? { color: 'bg-yellow-500', text: 'Negociación activa' }
     : done
-    ? { color: 'bg-green-500', text: '✓ Listo' }
+    ? { color: 'bg-green-500', text: '¡Listo! Esperando al grupo...' }
     : null
 
-  const placeholder = done
-    ? 'Esperando al grupo...'
-    : negotiating
-    ? 'Escribe tu respuesta al conflicto...'
+  const placeholder = negotiating
+    ? 'Tu opinión sobre el compromiso...'
+    : done
+    ? '¡Preferencias guardadas!'
     : 'Escribe tu respuesta...'
 
-  const inputDisabled = loading || done
+  const inputDisabled = loading || (done && !negotiating)
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50">
 
       {/* Header */}
-      <div className={`px-4 py-4 shadow bg-gradient-to-r ${negotiating ? 'from-yellow-500 to-orange-500' : 'from-blue-600 to-indigo-700'}`}>
+      <div className="bg-gradient-to-r from-blue-600 to-indigo-700 px-4 py-4 shadow">
         <div className="max-w-2xl mx-auto flex items-center gap-3">
-          <div className="text-3xl">{negotiating ? '⚠️' : '🤖'}</div>
+          <div className="text-3xl">{negotiating ? '🤝' : '🤖'}</div>
           <div>
             <h1 className="text-white font-bold text-lg">
-              {negotiating ? 'Conflicto en el grupo' : 'Agente de viajes'}
+              {negotiating ? 'Negociación de grupo' : 'Agente de viajes'}
             </h1>
-            <p className="text-white/70 text-sm">Sesión: {sessionId}</p>
+            <p className="text-blue-200 text-sm">Sesión: {sessionId}</p>
           </div>
 
+          {/* Voice toggle */}
           {VOICE_SUPPORTED && (
             <button
               onClick={() => { setVoiceOn(v => !v); SS.cancel() }}
+              title={voiceOn ? 'Desactivar voz' : 'Activar voz'}
               className={`ml-auto flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors ${
-                voiceOn ? 'bg-white text-blue-700 border-white' : 'bg-transparent text-white/70 border-white/40 hover:border-white hover:text-white'
+                voiceOn
+                  ? 'bg-white text-blue-700 border-white'
+                  : 'bg-transparent text-blue-200 border-blue-400 hover:border-white hover:text-white'
               }`}
             >
               {voiceOn ? '🔊 Voz ON' : '🔇 Voz OFF'}
             </button>
           )}
 
-          {badge && !VOICE_SUPPORTED && (
-            <div className={`ml-auto ${badge.color} text-white text-xs font-semibold px-3 py-1 rounded-full`}>
+          {badge && (
+            <div className={`${VOICE_SUPPORTED ? '' : 'ml-auto'} ${badge.color} text-white text-xs font-semibold px-3 py-1 rounded-full`}>
               {badge.text}
             </div>
           )}
         </div>
       </div>
+
+      {/* No-support warning */}
+      {(noSupport || (!VOICE_SUPPORTED)) && (
+        <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 text-center text-amber-700 text-sm">
+          Tu navegador no soporta la Web Speech API. Usa Chrome para activar el chat por voz.
+        </div>
+      )}
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-6">
@@ -205,7 +251,7 @@ export default function Chat({ sessionId, userId, onDone, negotiationMessage }) 
         </div>
       </div>
 
-      {/* Input */}
+      {/* Input bar */}
       <div className="border-t bg-white px-4 py-3">
         <form
           onSubmit={e => { e.preventDefault(); sendMessage(input) }}
@@ -218,6 +264,8 @@ export default function Chat({ sessionId, userId, onDone, negotiationMessage }) 
             placeholder={placeholder}
             className="flex-1 border border-slate-300 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100"
           />
+
+          {/* Mic button */}
           {VOICE_SUPPORTED && (
             <button
               type="button"
@@ -225,12 +273,15 @@ export default function Chat({ sessionId, userId, onDone, negotiationMessage }) 
               disabled={inputDisabled}
               title={listening ? 'Escuchando… (click para parar)' : 'Hablar'}
               className={`px-4 py-3 rounded-xl font-semibold transition-all disabled:opacity-40 ${
-                listening ? 'bg-red-500 hover:bg-red-600 text-white animate-pulse' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                listening
+                  ? 'bg-red-500 hover:bg-red-600 text-white animate-pulse'
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
               }`}
             >
               {listening ? '⏹' : '🎤'}
             </button>
           )}
+
           <button
             type="submit"
             disabled={inputDisabled || !input.trim()}
@@ -239,6 +290,7 @@ export default function Chat({ sessionId, userId, onDone, negotiationMessage }) 
             {negotiating ? 'Responder' : 'Enviar'}
           </button>
         </form>
+
         {listening && (
           <p className="max-w-2xl mx-auto mt-2 text-center text-sm text-red-500 animate-pulse">
             🎤 Escuchando en español… habla ahora

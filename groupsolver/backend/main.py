@@ -255,6 +255,7 @@ async def _run_aggregation(session_id: str):
                 "generated_at": datetime.utcnow().isoformat(),
             }
             db.save_result(session_id, result)
+            db.set_session_status(session_id, "success")
 
         await asyncio.wait_for(asyncio.get_event_loop().run_in_executor(None, _do), timeout=300)
 
@@ -511,18 +512,57 @@ async def negotiate_response(session_id: str, user_id: str, body: NegotiateRespo
     """Record a member's response to a negotiation proposal."""
     db.save_negotiation_response(session_id, user_id, body.response)
     session = db.get_session(session_id)
-    all_prefs = db.get_all_preferences(session_id)
 
-    # Check if everyone responded
     round_data = db.get_negotiation_round(session_id)
-    if round_data:
-        responses = round_data.get("responses", {})
-        members = session.get("members", [])
-        if all(uid in responses for uid in members):
-            # Everyone responded — run aggregation
-            asyncio.create_task(_run_aggregation(session_id))
+    if not round_data:
+        return {"ok": True}
+
+    responses = round_data.get("responses", {})
+    # Include this response in the check (it was just saved)
+    responses[user_id] = body.response
+    members = session.get("members", [])
+
+    if all(uid in responses for uid in members):
+        # Everyone responded — extract updated prefs and re-evaluate
+        asyncio.create_task(_apply_negotiation_and_recheck(session_id, round_data, responses))
 
     return {"ok": True}
+
+
+async def _apply_negotiation_and_recheck(session_id: str, round_data: dict, responses: dict):
+    """Extract updated preferences from negotiation responses, save them, then re-check conflicts."""
+    all_prefs = db.get_all_preferences(session_id)
+    conflicts = round_data.get("conflicts", [])
+
+    def _do_extract():
+        updates = {}
+        for uid, response in responses.items():
+            pref_doc = all_prefs.get(uid, {})
+            original = pref_doc.get("preferences") or pref_doc.get("collected_so_far", {})
+            if not original:
+                continue
+            updated = gemma.extract_updated_preferences(original, conflicts, response)
+            if updated:
+                updates[uid] = updated
+        return updates
+
+    try:
+        pref_updates = await asyncio.get_event_loop().run_in_executor(None, _do_extract)
+    except Exception:
+        import traceback; traceback.print_exc()
+        pref_updates = {}
+
+    # Save updated preferences back to DB
+    for uid, new_prefs in pref_updates.items():
+        pref_doc = all_prefs.get(uid, {})
+        updated_doc = {**pref_doc, "preferences": new_prefs, "collected_so_far": new_prefs}
+        db.save_preferences(session_id, uid, updated_doc)
+
+    # Reset negotiation state so it can trigger again if needed
+    db.set_session_status(session_id, "collecting")
+
+    # Re-check: conflicts resolved? → aggregate; still conflicts? → new negotiation round
+    await _check_and_proceed(session_id)
 
 
 @app.post("/session/{session_id}/solve")
