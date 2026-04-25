@@ -5,7 +5,7 @@ import httpx
 from datetime import date
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
-MODEL = os.getenv("OLLAMA_MODEL", "qwen3:8b")
+MODEL = os.getenv("OLLAMA_MODEL", "gemma3:4b")
 
 # ── Ollama calls ─────────────────────────────────────────────────────────────
 
@@ -17,7 +17,8 @@ def _ollama_chat(system: str, messages: list[dict], tools: list[dict] | None = N
         "stream": False,
         "options": {"think": False},
     }
-    if tools:
+    # Only pass tools if model supports it (not gemma3)
+    if tools and "gemma" not in MODEL.lower():
         payload["tools"] = tools
     with httpx.Client(timeout=300) as client:
         r = client.post(f"{OLLAMA_URL}/api/chat", json=payload)
@@ -126,16 +127,24 @@ _COLLECTION_TOOLS = [
     },
 ]
 
-_COLLECTION_SYSTEM = """You're a friend casually planning a group trip together. Chat naturally — not like a form.
+_COLLECTION_SYSTEM = """You are a friend chatting about an upcoming trip you're planning together. You're excited and curious — NOT running a form or interview.
 
-Collect these 3 things through conversation (one at a time):
-- travel dates → save_preference(available_dates, {{start,end}} YYYY-MM-DD)
-- flight budget → save_preference(max_budget_flight, number)
-- trip vibe → save_preference(trip_type, array: beach/city/nature/culture/adventure)
+Your hidden goal: figure out three things naturally through conversation:
+1. When is the person free to travel? (available_dates)
+2. How much would they want to spend on the flight? (max_budget_flight)
+3. What kind of trip vibe are they into? (trip_type — e.g. beach, city, nature, culture, adventure)
 
-When all 3 saved → mark_complete(). React warmly before asking the next thing.
+Rules:
+- Always reply in English.
+- Talk like a real person. React to what they say. Be warm, funny, genuine.
+- Never list questions. Ask one thing at a time, embedded in a natural sentence.
+- If they mention something relevant (like "I have two weeks off in July"), react to that first, then gently steer.
+- Use save_preference the moment you extract a piece of info.
+- Once all 3 are collected, call mark_complete().
+- Don't say "I need to collect..." or "As a travel assistant...". Just be their friend planning the trip.
 
-Have: {collected_so_far} | Need: {missing_fields}"""
+Already know: {collected_so_far}
+Still figuring out: {missing_fields}"""
 
 
 def _extract_prefs_from_text(user_message: str, bot_reply: str) -> dict:
@@ -198,7 +207,7 @@ def chat_turn(
     reply_text = ""
 
     # Agentic loop: keep going while the model wants to call tools
-    for _ in range(4):  # max 4 tool iterations per turn (3 fields + mark_complete)
+    for _ in range(8):  # max 8 tool iterations per turn
         response_msg = _ollama_chat(system, messages, tools=_COLLECTION_TOOLS)
         tool_calls = response_msg.get("tool_calls", [])
 
@@ -245,7 +254,10 @@ def chat_turn(
             })
 
         if complete:
-            reply_text = "¡Perfecto, ya tengo todo lo que necesito! 🎉"
+            # Ask model for a confirmation message
+            messages.append({"role": "user", "content": "__confirm__"})
+            final_msg = _ollama_chat(system, messages)
+            reply_text = _strip_comment_blocks(final_msg.get("content", "Perfect, I have everything I need!"))
             break
 
     # Build final preferences if complete
@@ -297,12 +309,22 @@ def chat_turn_stream(
 # NEGOTIATION (unchanged logic, kept clean)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_NEGOTIATION_SYSTEM = """You mediate a group travel conflict. Write a short, warm message TO THE GROUP.
+_NEGOTIATION_SYSTEM = """You are a friendly travel mediator helping two friends plan a trip together.
 
-Members: {members_json}
-Conflicts: {conflicts_json}
+The two people and their preferences:
+{members_json}
 
-Name each person, explain the clash with their specific values, suggest a compromise, ask each one if they'd adjust. 2-3 short paragraphs max."""
+Conflicts detected:
+{conflicts_json}
+
+Write a short message (2-3 sentences max) TO BOTH OF THEM that:
+1. Names the conflict directly using their names (e.g. "Ana wants beach, Carlos wants city — you two need to agree!")
+2. Asks them what they're willing to change
+
+Rules:
+- Never say "group", "team", or "everyone" — there are only two people.
+- Be casual and direct. No bullet points, no lists.
+- Keep it under 3 sentences."""
 
 
 def negotiate(members: dict, conflicts: list[str], round_num: int = 1) -> str:
@@ -316,12 +338,17 @@ def negotiate(members: dict, conflicts: list[str], round_num: int = 1) -> str:
     return _strip_comment_blocks(msg.get("content", ""))
 
 
-_NEGOTIATION_EXTRACT_SYSTEM = """Extract updated travel prefs from this response. Keep originals for unchanged fields.
+_NEGOTIATION_EXTRACT_SYSTEM = """You are extracting updated travel preferences from a user's negotiation response.
 
-Original: {original_prefs}
-Response: "{response}"
+Original preferences: {original_prefs}
+Conflicts detected: {conflicts}
+User's response: "{response}"
 
-Output ONLY JSON: {{"available_dates":{{"start":"YYYY-MM-DD","end":"YYYY-MM-DD"}},"max_budget_flight":0,"trip_type":[]}}"""
+Extract any updated preferences the user agreed to. Only update fields they explicitly changed.
+If they refused to change, keep the original value.
+
+Output ONLY this JSON (no markdown):
+{{"available_dates":{{"start":"YYYY-MM-DD","end":"YYYY-MM-DD"}},"max_budget_flight":0,"trip_type":[]}}"""
 
 
 def extract_updated_preferences(original_prefs: dict, conflicts: list[str], response: str) -> dict | None:
@@ -353,13 +380,24 @@ def extract_updated_preferences(original_prefs: dict, conflicts: list[str], resp
 # AGGREGATION — single LLM call for narratives (scoring already done by scoring.py)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_AGGREGATE_SYSTEM = """Write travel narratives for a group. Destinations are pre-ranked — just write the text.
+_AGGREGATE_SYSTEM = """You are writing a travel recommendation for two friends planning a trip together.
 
-Members: {members_json}
-Top destinations: {scored_json}
+The destinations are already ranked by a scoring engine. Your only job is to write human-readable text.
 
-Output ONLY JSON (no markdown):
-{{"why":"<2 sentences why #1 wins, name each member>","why_per_member":{{"<name>":"<1 sentence>"}},"recommendation":"<1 warm sentence>"}}"""
+The two travellers and their preferences:
+{members_json}
+
+Top ranked destinations (in order):
+{scored_json}
+
+Output ONLY this JSON (no markdown, no explanation):
+{{
+  "why": "<2 sentences: why the #1 destination is the best pick for these two specific people, mention them by name>",
+  "why_per_member": {{"<name>": "<1 sentence why they personally will love it>"}},
+  "recommendation": "<1 warm sentence addressed to both of them by name>"
+}}
+
+Rules: never say "group", "team", or "everyone". These are two people, talk to them directly."""
 
 
 def aggregate(
@@ -390,13 +428,9 @@ def aggregate(
         for uid, prefs in group_preferences.items()
     }
 
-    slim_dests = [
-        {"city": d.get("city"), "country": d.get("country"), "score": d.get("score"), "tags": d.get("tags", [])}
-        for d in scored_destinations[:3]
-    ]
     system = _AGGREGATE_SYSTEM.format(
-        members_json=json.dumps(named_members, ensure_ascii=False),
-        scored_json=json.dumps(slim_dests, ensure_ascii=False),
+        members_json=json.dumps(named_members, ensure_ascii=False, indent=2),
+        scored_json=json.dumps(scored_destinations[:5], ensure_ascii=False, indent=2),
     )
     msg = _ollama_chat(system, [{"role": "user", "content": "Write the recommendation."}])
     narrative = _extract_json(msg.get("content", "")) or {}

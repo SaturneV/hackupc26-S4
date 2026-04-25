@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Users, UserPlus, ArrowRight, PlaneTakeoff, Loader2, Copy } from 'lucide-react';
-import clsx from 'clsx';
 
 const API = import.meta.env.VITE_API_URL;
 
@@ -34,7 +33,7 @@ export default function AuraSessionManager({ onJoined }) {
       });
       if (!res.ok) throw new Error(await res.text());
       const { session_id } = await res.json();
-      const link = `${window.location.origin}?session=${session_id}`;
+      const link = `${window.location.origin}${window.location.pathname}?session=${session_id}`;
       setCreatedLink(link);
       setSessionInput(session_id);
       setMode('join');
@@ -67,16 +66,16 @@ export default function AuraSessionManager({ onJoined }) {
   };
 
   return (
-    <motion.div 
+    <motion.div
       initial={{ opacity: 0, y: 30 }}
       animate={{ opacity: 1, y: 0 }}
       className="w-full max-w-md mx-auto glass-heavy p-8 rounded-3xl border border-white/10 shadow-2xl relative overflow-hidden"
     >
       <div className="absolute inset-0 bg-gradient-to-b from-sky-500/5 to-emerald-500/5 pointer-events-none" />
-      
+
       <div className="relative z-10">
         <div className="text-center mb-8">
-          <motion.div 
+          <motion.div
             initial={{ scale: 0.9 }}
             animate={{ scale: 1 }}
             className="w-16 h-16 rounded-2xl bg-white/5 border border-white/10 mx-auto flex items-center justify-center mb-4 shadow-[0_0_30px_rgba(56,189,248,0.2)]"
@@ -89,7 +88,7 @@ export default function AuraSessionManager({ onJoined }) {
 
         <AnimatePresence mode="wait">
           {mode === 'landing' && (
-            <motion.div 
+            <motion.div
               key="landing"
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
@@ -127,11 +126,12 @@ export default function AuraSessionManager({ onJoined }) {
                 </div>
                 <ArrowRight className="w-5 h-5 text-slate-500 group-hover:text-white transition-colors group-hover:translate-x-1" />
               </button>
+
             </motion.div>
           )}
 
           {mode === 'create' && (
-            <motion.div 
+            <motion.div
               key="create"
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
@@ -148,29 +148,26 @@ export default function AuraSessionManager({ onJoined }) {
                   className="w-full bg-black/20 border border-white/10 rounded-xl px-4 py-3 text-white text-lg focus:outline-none focus:ring-2 focus:ring-sky-500/50 transition-all"
                 />
               </div>
-              
+
               {error && <p className="text-red-400 text-xs font-medium bg-red-400/10 p-3 rounded-lg border border-red-400/20">{error}</p>}
-              
+
               <button
                 onClick={handleCreate}
                 disabled={loading}
                 className="w-full py-3.5 bg-sky-500 hover:bg-sky-400 text-white rounded-xl font-semibold transition-all shadow-[0_0_20px_rgba(56,189,248,0.3)] disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {loading && <Loader2 className="w-4 h-4 animate-spin" />}
-                {loading ? 'Initializing AI...' : 'Initialize Session'}
+                {loading ? 'Initializing...' : 'Initialize Session'}
               </button>
-              
-              <button 
-                onClick={() => setMode('landing')} 
-                className="w-full text-slate-400 text-sm hover:text-white transition-colors"
-              >
+
+              <button onClick={() => setMode('landing')} className="w-full text-slate-400 text-sm hover:text-white transition-colors">
                 Cancel
               </button>
             </motion.div>
           )}
 
           {mode === 'join' && (
-            <motion.div 
+            <motion.div
               key="join"
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
@@ -182,7 +179,7 @@ export default function AuraSessionManager({ onJoined }) {
                   <p className="text-xs text-sky-400 font-semibold uppercase tracking-wider mb-2">Share this link</p>
                   <div className="flex gap-2">
                     <input
-                      readOnly 
+                      readOnly
                       value={createdLink}
                       className="flex-1 bg-black/40 border border-white/5 rounded-lg px-3 py-2 text-slate-300 text-xs focus:outline-none"
                     />
@@ -206,7 +203,7 @@ export default function AuraSessionManager({ onJoined }) {
                   className="w-full bg-black/20 border border-white/10 rounded-xl px-4 py-3 text-white text-lg font-mono focus:outline-none focus:ring-2 focus:ring-sky-500/50 transition-all placeholder:text-slate-600"
                 />
               </div>
-              
+
               <div>
                 <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Your Name</label>
                 <input
@@ -219,7 +216,7 @@ export default function AuraSessionManager({ onJoined }) {
               </div>
 
               {error && <p className="text-red-400 text-xs font-medium bg-red-400/10 p-3 rounded-lg border border-red-400/20">{error}</p>}
-              
+
               <button
                 onClick={handleJoin}
                 disabled={loading}
@@ -228,17 +225,15 @@ export default function AuraSessionManager({ onJoined }) {
                 {loading && <Loader2 className="w-4 h-4 animate-spin" />}
                 {loading ? 'Connecting...' : 'Enter Session'}
               </button>
-              
+
               {!createdLink && (
-                <button 
-                  onClick={() => setMode('landing')} 
-                  className="w-full text-slate-400 text-sm hover:text-white transition-colors"
-                >
+                <button onClick={() => setMode('landing')} className="w-full text-slate-400 text-sm hover:text-white transition-colors">
                   Cancel
                 </button>
               )}
             </motion.div>
           )}
+
         </AnimatePresence>
       </div>
     </motion.div>

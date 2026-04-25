@@ -8,6 +8,27 @@ const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const SS = window.speechSynthesis;
 const VOICE_SUPPORTED = !!(SR && SS);
 
+const DEMO_PROFILES = [
+  {
+    label: "🇫🇷 Francia",
+    available_dates: { start: "2025-04-14", end: "2025-04-21" },
+    max_budget_flight: 400,
+    trip_type: ["city", "culture"],
+  },
+  {
+    label: "🇮🇹 Italia",
+    available_dates: { start: "2025-04-14", end: "2025-04-21" },
+    max_budget_flight: 400,
+    trip_type: ["city", "adventure"],
+  },
+  {
+    label: "🏖️ Playa",
+    available_dates: { start: "2025-04-14", end: "2025-04-21" },
+    max_budget_flight: 350,
+    trip_type: ["beach", "nature"],
+  },
+];
+
 export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }) {
   const [listening, setListening] = useState(false);
   const [speaking, setSpeaking] = useState(false);
@@ -15,18 +36,47 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
   const [voiceOn, setVoiceOn] = useState(true);
   const [agentMessage, setAgentMessage] = useState('');
   const [textInput, setTextInput] = useState('');
-  
+
   const [isDone, setIsDone] = useState(false);
   const [sessionPhase, setSessionPhase] = useState('collecting'); // 'collecting', 'negotiating', 'success'
-  
+  const [agentCards, setAgentCards] = useState([]); // [{from, text, conflict}]
+  const [showAutofill, setShowAutofill] = useState(false);
+
   const srRef = useRef(null);
   const initialized = useRef(false);
+
+  const speakWhenReady = (text) => {
+    if (!SS) return;
+    const doSpeak = () => speakText(text);
+    if (SS.getVoices().length > 0) {
+      doSpeak();
+    } else {
+      SS.addEventListener('voiceschanged', doSpeak, { once: true });
+    }
+  };
 
   // Initialize AI conversation when entering the room
   useEffect(() => {
     if (!initialized.current) {
       initialized.current = true;
-      handleSend("Hola!"); // Trigger the AI to ask the first question
+      const welcome = "Hey! Tell me when you're free to travel and what kind of trip you're into.";
+      fetch(`${API}/session/${sessionId}`)
+        .then(r => r.json())
+        .then(sessionData => {
+          const me = sessionData.members_info?.find(m => m.user_id === userId);
+          if (me?.status === 'done') {
+            setIsDone(true);
+            setAgentMessage('Waiting for the other person...');
+            speakWhenReady('Waiting for the other person...');
+          } else {
+            setAgentMessage(welcome);
+            speakWhenReady(welcome);
+          }
+        })
+        .catch(() => {
+          setAgentMessage(welcome);
+          speakWhenReady(welcome);
+        });
     }
   }, [sessionId, userId]);
 
@@ -36,7 +86,7 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
     try {
       const sr = new SR();
       srRef.current = sr;
-      sr.lang = 'es-ES'; // Set to Spanish based on the user's project preference
+      sr.lang = 'en-US';
       sr.interimResults = false;
       sr.maxAlternatives = 1;
 
@@ -59,7 +109,7 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
     return () => {
       try { srRef.current?.abort(); } catch(e){}
     };
-  }, [sessionId, userId]); 
+  }, [sessionId, userId]);
 
   // Polling for session status when waiting for others
   useEffect(() => {
@@ -71,41 +121,41 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
         const res = await fetch(`${API}/session/${sessionId}`);
         if (!res.ok) return;
         const sessionData = await res.json();
-        
+
         if (sessionData.status === 'success') {
            const resultRes = await fetch(`${API}/session/${sessionId}/result`);
            const resultData = await resultRes.json();
            if (resultData.result && resultData.result.top_destinations) {
               onDestinationsUpdate(resultData.result.top_destinations);
-              setAgentMessage(resultData.result.recommendation || "Ja tenim els resultats per al grup!");
-              speakText(resultData.result.recommendation || "Ja tenim els resultats per al grup!");
+              setAgentMessage(resultData.result.recommendation || "We found your perfect destination!");
+              speakText(resultData.result.recommendation || "We found your perfect destination!");
               setSessionPhase('success');
               isPolling = false;
            }
         } else if (sessionData.status === 'negotiating') {
            const negRes = await fetch(`${API}/session/${sessionId}/negotiation-round`);
            const negData = await negRes.json();
-           
+
            // If user hasn't responded to this negotiation round
            if (!negData.responses || !negData.responses[userId]) {
-              setAgentMessage(negData.proposal_message);
-              speakText(negData.proposal_message);
+              setAgentCards([]);
+              setAgentMessage(negData.proposal_message || '');
               setSessionPhase('negotiating');
-              setIsDone(false); // Unhide the text input to let them answer
-              isPolling = false; // Stop polling until they answer
+              setIsDone(false);
+              isPolling = false;
            }
         }
       } catch (err) {
         console.error("Polling error:", err);
       }
-      
+
       if (isPolling) {
         setTimeout(poll, 3000);
       }
     };
-    
+
     poll();
-    
+
     return () => { isPolling = false; };
   }, [isDone, sessionId, userId, sessionPhase]);
 
@@ -120,11 +170,11 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
           body: JSON.stringify({ response: text }),
         });
         if (!res.ok) throw new Error(await res.text());
-        
+
         setIsDone(true);
-        setSessionPhase('collecting'); // It will go back to negotiating or success on the next poll
-        setAgentMessage("Resposta enviada. Esperant a la resta del grup...");
-        speakText("Resposta enviada. Esperant a la resta del grup...");
+        setSessionPhase('collecting');
+        setAgentMessage("Response sent. Waiting for the other person...");
+        speakText("Response sent. Waiting for the other person...");
       } else {
         const res = await fetch(`${API}/session/${sessionId}/member/${userId}/chat`, {
           method: 'POST',
@@ -133,18 +183,18 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
         });
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
-        
+
         setAgentMessage(data.reply);
         speakText(data.reply);
-        
+
         if (data.done) {
           setIsDone(true);
         }
       }
     } catch (err) {
       console.error(err);
-      setAgentMessage("Perdona, hi ha hagut un error de connexió.");
-      speakText("Perdona, hi ha hagut un error de connexió.");
+      setAgentMessage("Sorry, there was a connection error.");
+      speakText("Sorry, there was a connection error.");
     } finally {
       setLoading(false);
     }
@@ -156,12 +206,12 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
       SS.cancel();
       const cleanText = text.replace(/\*\*/g, '').replace(/#+\s*/g, '');
       const utt = new SpeechSynthesisUtterance(cleanText);
-      utt.lang = 'es-ES';
-      
+      utt.lang = 'en-US';
+
       utt.onstart = () => setSpeaking(true);
       utt.onend = () => setSpeaking(false);
       utt.onerror = () => setSpeaking(false);
-      
+
       SS.speak(utt);
     } catch(err) {
       console.warn("Speech Synthesis failed:", err);
@@ -170,7 +220,7 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
 
   const toggleListening = () => {
     if (!VOICE_SUPPORTED) {
-      alert("El teu navegador no suporta el micròfon. Pots utilitzar el teclat a sota.");
+      alert("Your browser doesn't support the microphone. Use the text input below.");
       return;
     }
     try {
@@ -183,7 +233,7 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
       }
     } catch (err) {
       console.warn("Microphone access error:", err);
-      alert("Error en accedir al micròfon (pot ser per connexió no segura HTTP). Utilitza el teclat.");
+      alert("Microphone error (possibly insecure HTTP connection). Use the text input instead.");
       setListening(false);
     }
   };
@@ -196,19 +246,39 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
     }
   };
 
+  const handleAutofill = async (profile) => {
+    setShowAutofill(false);
+    setLoading(true);
+    try {
+      const res = await fetch(`${API}/session/${sessionId}/member/${userId}/quick-fill`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(profile),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setIsDone(true);
+      setAgentMessage('Preferences saved! Waiting for the other person...');
+    } catch (err) {
+      console.error(err);
+      setAgentMessage('Autofill error. Try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="absolute inset-0 z-20 pointer-events-none flex flex-col justify-end">
-      
+
       {/* Full Screen Glow Effects */}
-      <motion.div 
+      <motion.div
         className="absolute inset-0 mix-blend-screen pointer-events-none"
         animate={{
-          boxShadow: listening 
-            ? 'inset 0 0 150px rgba(239, 68, 68, 0.3)' 
+          boxShadow: listening
+            ? 'inset 0 0 150px rgba(239, 68, 68, 0.3)'
             : speaking
-            ? 'inset 0 0 150px rgba(56, 189, 248, 0.3)' 
+            ? 'inset 0 0 150px rgba(56, 189, 248, 0.3)'
             : loading
-            ? 'inset 0 0 150px rgba(16, 185, 129, 0.2)' 
+            ? 'inset 0 0 150px rgba(16, 185, 129, 0.2)'
             : sessionPhase === 'success'
             ? 'inset 0 0 150px rgba(16, 185, 129, 0.4)'
             : 'inset 0 0 0px rgba(0,0,0,0)'
@@ -219,7 +289,37 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
       {/* Subtitles & Status */}
       <div className="w-full max-w-3xl mx-auto px-4 md:px-8 pb-8 flex flex-col items-center">
         <AnimatePresence mode="wait">
-          {agentMessage && (
+          {sessionPhase === 'negotiating' && agentCards.length > 0 ? (
+            <motion.div
+              key="agent-cards"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="mb-6 w-full flex flex-col gap-2"
+            >
+              {agentCards.map((card, i) => (
+                <motion.div
+                  key={i}
+                  initial={{ opacity: 0, x: -10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: i * 0.08 }}
+                  className={clsx(
+                    "flex items-start gap-3 px-4 py-3 rounded-xl backdrop-blur-md border text-sm",
+                    card.conflict
+                      ? "bg-red-500/10 border-red-500/30 text-red-200"
+                      : "bg-emerald-500/10 border-emerald-500/30 text-emerald-200"
+                  )}
+                >
+                  <span className={clsx(
+                    "shrink-0 w-2 h-2 rounded-full mt-1.5",
+                    card.conflict ? "bg-red-400" : "bg-emerald-400"
+                  )} />
+                  <span>{card.text}</span>
+                </motion.div>
+              ))}
+              <p className="text-center text-slate-400 text-xs mt-1">Tell us what you're willing to change</p>
+            </motion.div>
+          ) : agentMessage ? (
             <motion.div
               key="subtitle"
               initial={{ opacity: 0, y: 10 }}
@@ -231,7 +331,7 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
                 "{agentMessage}"
               </p>
             </motion.div>
-          )}
+          ) : null}
           {listening && (
             <motion.div
               key="listening"
@@ -240,14 +340,14 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
               exit={{ opacity: 0 }}
               className="mb-4 text-red-400 font-medium animate-pulse"
             >
-              Escoltant...
+              Listening...
             </motion.div>
           )}
         </AnimatePresence>
 
         {/* Controls and Text Input */}
         <div className="pointer-events-auto flex flex-col items-center w-full max-w-md gap-4">
-          
+
           <div className="flex items-center gap-4">
             <button
               onClick={toggleListening}
@@ -266,7 +366,7 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
                 <Mic className={clsx("w-6 h-6", speaking ? "text-sky-400" : "text-white")} />
               )}
             </button>
-            
+
             {VOICE_SUPPORTED && (
               <button
                 onClick={() => setVoiceOn(!voiceOn)}
@@ -276,6 +376,34 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
                 {voiceOn ? <Volume2 className="w-5 h-5 text-white" /> : <VolumeX className="w-5 h-5 text-slate-400" />}
               </button>
             )}
+
+            {!isDone && sessionPhase !== 'success' && (
+              <div className="relative shrink-0">
+                <button
+                  onClick={() => setShowAutofill(v => !v)}
+                  disabled={loading}
+                  className="w-12 h-12 rounded-full flex items-center justify-center glass-heavy border border-amber-400/40 text-amber-300 hover:bg-amber-400/10 transition-all duration-300 text-xs font-bold"
+                  title="Demo autofill"
+                >
+                  ⚡
+                </button>
+                {showAutofill && (
+                  <div className="absolute bottom-14 right-0 w-52 bg-black/80 border border-white/10 rounded-2xl backdrop-blur-md overflow-hidden shadow-2xl">
+                    <p className="text-xs text-amber-300 font-semibold px-4 pt-3 pb-1 uppercase tracking-wider">Demo autofill</p>
+                    {DEMO_PROFILES.map((p, i) => (
+                      <button
+                        key={i}
+                        onClick={() => handleAutofill(p)}
+                        className="w-full text-left px-4 py-3 text-sm text-white hover:bg-white/10 transition-colors border-t border-white/5"
+                      >
+                        <span className="font-medium">{p.label}</span>
+                        <span className="block text-xs text-slate-400 mt-0.5">€{p.max_budget_flight} · {p.trip_type.join(', ')}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {!isDone && sessionPhase !== 'success' && (
@@ -284,7 +412,7 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
                 type="text"
                 value={textInput}
                 onChange={e => setTextInput(e.target.value)}
-                placeholder="Escriu la teva resposta aquí..."
+                placeholder="Type your answer here..."
                 disabled={loading}
                 className="flex-1 bg-black/40 border border-white/20 rounded-full px-5 py-3 text-white focus:outline-none focus:ring-2 focus:ring-sky-500/50 backdrop-blur-md placeholder:text-slate-400 text-sm md:text-base"
               />
@@ -300,13 +428,13 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
 
           {isDone && sessionPhase !== 'success' && (
             <div className="text-emerald-400 text-sm font-medium bg-emerald-400/10 px-4 py-2 rounded-full border border-emerald-400/20 mt-2">
-              {sessionPhase === 'collecting' ? 'Preferències guardades! Esperant la resta del grup...' : 'Esperant la resta del grup...'}
+              {sessionPhase === 'collecting' ? 'Preferences saved! Waiting for the other person...' : 'Waiting for the other person...'}
             </div>
           )}
-          
+
           {sessionPhase === 'success' && (
             <div className="text-emerald-400 text-sm font-medium bg-emerald-400/10 px-4 py-2 rounded-full border border-emerald-400/20 mt-2">
-              Destins trobats! Fes zoom al globus.
+              Destination found! Zoom in on the globe.
             </div>
           )}
         </div>
