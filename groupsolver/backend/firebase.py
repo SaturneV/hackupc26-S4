@@ -106,6 +106,15 @@ def set_session_status(session_id: str, status: str):
     _get_db().collection("sessions").document(session_id).update({"status": status})
 
 
+def set_demo_bot_uids(session_id: str, bot_uids: list):
+    if USE_MOCK_DB:
+        s = _mock.get(session_id)
+        if s:
+            s["_meta"]["demo_bot_uids"] = bot_uids
+        return
+    _get_db().collection("sessions").document(session_id).update({"demo_bot_uids": bot_uids})
+
+
 # ── Preferences ──────────────────────────────────────────────────────────────
 
 def get_preferences(session_id: str, user_id: str) -> dict | None:

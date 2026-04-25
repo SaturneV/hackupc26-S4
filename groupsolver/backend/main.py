@@ -1,6 +1,6 @@
 import os
 import asyncio
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -48,6 +48,11 @@ class ChatRequest(BaseModel):
 
 class NegotiateResponseRequest(BaseModel):
     response: str  # member's response to negotiation proposal
+
+class QuickFillRequest(BaseModel):
+    available_dates: dict        # {"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"}
+    max_budget_flight: int
+    trip_type: list[str]
 
 
 # ── Aggregation lock ─────────────────────────────────────────────────────────
@@ -118,6 +123,53 @@ def _detect_conflicts(group_prefs: dict, member_names: dict | None = None) -> li
     return conflicts
 
 
+def _build_agent_messages(group: dict, member_names: dict) -> list[dict]:
+    """Build short per-agent conflict messages for the UI."""
+    messages = []
+
+    # Figure out who disagrees on trip_type
+    all_types = {uid: set(group[uid].get("trip_type", [])) for uid in group}
+    uids = list(all_types.keys())
+
+    for i in range(len(uids)):
+        for j in range(i + 1, len(uids)):
+            uid_a, uid_b = uids[i], uids[j]
+            types_a, types_b = all_types[uid_a], all_types[uid_b]
+            name_a = member_names.get(uid_a, uid_a)
+            name_b = member_names.get(uid_b, uid_b)
+            if not types_a & types_b:
+                messages.append({
+                    "from": name_a,
+                    "text": f"{name_a} and {name_b} disagree on the trip type.",
+                    "conflict": True,
+                })
+
+    # Budget conflicts
+    budgets = {uid: group[uid].get("max_budget_flight", 0) for uid in group}
+    budget_list = [(uid, b) for uid, b in budgets.items() if b]
+    if len(budget_list) >= 2:
+        lo_uid, lo = min(budget_list, key=lambda x: x[1])
+        hi_uid, hi = max(budget_list, key=lambda x: x[1])
+        if lo > 0 and (hi - lo) / lo > 0.5:
+            messages.append({
+                "from": member_names.get(lo_uid, lo_uid),
+                "text": f"{member_names.get(lo_uid, lo_uid)} (€{lo}) and {member_names.get(hi_uid, hi_uid)} (€{hi}) have very different budgets.",
+                "conflict": True,
+            })
+
+    # Members with no conflicts
+    conflicting_names = {m["from"] for m in messages}
+    for uid, name in member_names.items():
+        if name not in conflicting_names:
+            messages.append({
+                "from": name,
+                "text": f"{name} is flexible and open to any option.",
+                "conflict": False,
+            })
+
+    return messages
+
+
 async def _check_and_proceed(session_id: str):
     """Called when all members finish chat. Runs negotiation if conflicts, else aggregates."""
     all_prefs_raw = db.get_all_preferences(session_id)
@@ -142,17 +194,20 @@ async def _check_and_proceed(session_id: str):
             except Exception:
                 import traceback; traceback.print_exc()
                 return (
-                    "Hemos detectado incompatibilidades en las preferencias del grupo. "
-                    f"Problemas: {'; '.join(conflicts)}. "
-                    "Por favor, negociad y decidid si podéis ajustar vuestras preferencias."
+                    "We found some conflicts between your preferences. "
+                    f"Issues: {'; '.join(conflicts)}. "
+                    "Please tell us what you'd be willing to adjust."
                 )
 
         message = await asyncio.get_event_loop().run_in_executor(None, _do_negotiate)
+
+        agent_messages = _build_agent_messages(group, member_names)
 
         round_data = {
             "round": 1,
             "conflicts": conflicts,
             "proposal_message": message,
+            "agent_messages": agent_messages,
             "responses": {},
         }
         db.save_negotiation_round(session_id, round_data)
@@ -252,7 +307,7 @@ async def _run_aggregation(session_id: str):
                     if green_alt and winner.get("co2_kg") else None,
                 } if green_alt else None,
                 "recommendation": ai_result.get("recommendation", ""),
-                "generated_at": datetime.utcnow().isoformat(),
+                "generated_at": datetime.now(timezone.utc).isoformat(),
             }
             db.save_result(session_id, result)
             db.set_session_status(session_id, "success")
@@ -281,6 +336,7 @@ async def _run_aggregation(session_id: str):
 
 
 # ── Routes ───────────────────────────────────────────────────────────────────
+
 
 @app.post("/session/create")
 async def create_session(body: CreateSessionRequest):
@@ -457,6 +513,44 @@ async def chat_stream(session_id: str, user_id: str, body: ChatRequest):
     return StreamingResponse(_generate(), media_type="text/event-stream")
 
 
+@app.post("/session/{session_id}/member/{user_id}/quick-fill")
+async def quick_fill(session_id: str, user_id: str, body: QuickFillRequest):
+    """Skip the AI chat and save preferences directly (demo / autofill mode)."""
+    pref_doc = db.get_preferences(session_id, user_id)
+    if not pref_doc:
+        raise HTTPException(404, "User not found in session")
+
+    dates = body.available_dates
+    trip_duration = 0
+    if dates.get("start") and dates.get("end"):
+        try:
+            s = date.fromisoformat(dates["start"])
+            e = date.fromisoformat(dates["end"])
+            trip_duration = (e - s).days
+        except ValueError:
+            pass
+
+    prefs = {
+        "available_dates": dates,
+        "max_budget_flight": body.max_budget_flight,
+        "trip_type": body.trip_type,
+        "trip_duration": trip_duration,
+    }
+
+    updated_doc = {
+        **pref_doc,
+        "preferences": prefs,
+        "collected_so_far": prefs,
+        "status": "done",
+    }
+    db.save_preferences(session_id, user_id, updated_doc)
+
+    if db.check_all_done(session_id):
+        asyncio.create_task(_check_and_proceed(session_id))
+
+    return {"ok": True, "preferences": prefs}
+
+
 @app.get("/session/{session_id}/negotiation-round")
 async def get_negotiation_round(session_id: str):
     """Return the current negotiation round data (proposal message + responses)."""
@@ -518,12 +612,18 @@ async def negotiate_response(session_id: str, user_id: str, body: NegotiateRespo
         return {"ok": True}
 
     responses = round_data.get("responses", {})
-    # Include this response in the check (it was just saved)
     responses[user_id] = body.response
+
+    # Auto-respond for demo bots so the demo user doesn't have to wait
+    bot_uids = session.get("demo_bot_uids", [])
+    for bot_uid in bot_uids:
+        if bot_uid not in responses:
+            db.save_negotiation_response(session_id, bot_uid, "I'm flexible, I agree with whatever the group decides.")
+            responses[bot_uid] = "I'm flexible, I agree with whatever the group decides."
+
     members = session.get("members", [])
 
     if all(uid in responses for uid in members):
-        # Everyone responded — extract updated prefs and re-evaluate
         asyncio.create_task(_apply_negotiation_and_recheck(session_id, round_data, responses))
 
     return {"ok": True}
