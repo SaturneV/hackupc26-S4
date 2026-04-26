@@ -1,5 +1,10 @@
 # Aura GroupSolver - Quick Launch Guide
 
+Aura GroupSolver is a tool that helps friends decide on their next travel destination in a fun way !
+It uses an AI agent to make sure you’re all on the same page and alerts you if there are any points of disagreement,
+such as price, dates, destinations, or the type of trip. Finally, it presents possible destinations in an engaging way.
+Project done during the HackUPC Hackathon 2026 at UPC Barcelona.
+
 ## Requirements
 - Python 3.9+
 - Node.js 16+
@@ -36,9 +41,9 @@ docker-compose up
 ```
 
 Docker-compose automatically:
-- ✓ Launches Ollama service
-- ✓ Starts FastAPI backend (depends on Ollama)
-- ✓ Starts Vite frontend (depends on backend)
+- Launches Ollama service
+- Starts FastAPI backend (depends on Ollama)
+- Starts Vite frontend (depends on backend)
 
 Then open:
 - **Frontend**: http://localhost:5173
