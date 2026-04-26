@@ -171,7 +171,7 @@ def _build_agent_messages(group: dict, member_names: dict) -> list[dict]:
 
 
 async def _check_and_proceed(session_id: str):
-    """Called when all members finish chat. Runs negotiation if conflicts, else aggregates."""
+    """Called when all members finish chat. Runs parallel-agent negotiation if conflicts, else aggregates."""
     all_prefs_raw = db.get_all_preferences(session_id)
     group = {
         uid: p["preferences"]
@@ -182,38 +182,54 @@ async def _check_and_proceed(session_id: str):
 
     conflicts = _detect_conflicts(group, member_names)
 
-    if conflicts:
-        members_for_ai = {
-            uid: {"name": member_names.get(uid, uid), "preferences": prefs}
-            for uid, prefs in group.items()
-        }
-
-        def _do_negotiate():
-            try:
-                return gemma.negotiate(members_for_ai, conflicts)
-            except Exception:
-                import traceback; traceback.print_exc()
-                return (
-                    "We found some conflicts between your preferences. "
-                    f"Issues: {'; '.join(conflicts)}. "
-                    "Please tell us what you'd be willing to adjust."
-                )
-
-        message = await asyncio.get_event_loop().run_in_executor(None, _do_negotiate)
-
-        agent_messages = _build_agent_messages(group, member_names)
-
-        round_data = {
-            "round": 1,
-            "conflicts": conflicts,
-            "proposal_message": message,
-            "agent_messages": agent_messages,
-            "responses": {},
-        }
-        db.save_negotiation_round(session_id, round_data)
-        db.set_session_status(session_id, "negotiating")
-    else:
+    if not conflicts:
         asyncio.create_task(_run_aggregation(session_id))
+        return
+
+    members_for_ai = {
+        uid: {"name": member_names.get(uid, uid), "preferences": prefs}
+        for uid, prefs in group.items()
+    }
+
+    loop = asyncio.get_event_loop()
+
+    def _negotiate_one(uid: str) -> tuple[str, str]:
+        name = member_names.get(uid, uid)
+        prefs = group[uid]
+        try:
+            msg = gemma.negotiate_for_member(
+                member_uid=uid,
+                member_name=name,
+                member_prefs=prefs,
+                all_members=members_for_ai,
+                conflicts=conflicts,
+            )
+        except Exception:
+            import traceback; traceback.print_exc()
+            msg = (
+                f"Hey {name}, we found some conflicts: {'; '.join(conflicts)}. "
+                "What would you be willing to adjust?"
+            )
+        return uid, msg
+
+    tasks = [loop.run_in_executor(None, _negotiate_one, uid) for uid in group]
+    results: list[tuple[str, str]] = await asyncio.gather(*tasks)
+
+    member_messages: dict[str, str] = {uid: msg for uid, msg in results}
+    first_uid = next(iter(member_messages))
+
+    agent_messages = _build_agent_messages(group, member_names)
+
+    round_data = {
+        "round": 1,
+        "conflicts": conflicts,
+        "proposal_message": member_messages[first_uid],
+        "agent_messages": agent_messages,
+        "member_messages": member_messages,
+        "responses": {},
+    }
+    db.save_negotiation_round(session_id, round_data)
+    db.set_session_status(session_id, "negotiating")
 
 
 async def _run_aggregation(session_id: str):
@@ -244,8 +260,27 @@ async def _run_aggregation(session_id: str):
                 default=500,
             )
 
+            # DATES AND ADULTS LOGIC
+            overlap_start = None
+            for p in group.values():
+                dates = p.get("available_dates", {})
+                if dates.get("start"):
+                    try:
+                        s = date.fromisoformat(dates["start"])
+                        overlap_start = max(overlap_start, s) if overlap_start else s
+                    except ValueError:
+                        pass
+            
+            depart_date_str = overlap_start.isoformat() if overlap_start else None
+            adults_count = len(group) if group else 1
+
             # Get flights
-            flights = sky.get_flights(origin=origin_iata, budget=budget)
+            flights = sky.get_flights(
+                origin=origin_iata,
+                budget=budget,
+                depart_date=depart_date_str,
+                adults=adults_count
+            )
 
             # Pre-compute scores using our deterministic engine
             # Merge destination data with flight prices
@@ -552,14 +587,19 @@ async def quick_fill(session_id: str, user_id: str, body: QuickFillRequest):
 
 
 @app.get("/session/{session_id}/negotiation-round")
-async def get_negotiation_round(session_id: str):
-    """Return the current negotiation round data (proposal message + responses)."""
+async def get_negotiation_round(session_id: str, user_id: str | None = None):
+    """Return the current negotiation round data. If user_id given, returns that user's personalized message."""
     session = db.get_session(session_id)
     if not session:
         raise HTTPException(404, "Session not found")
     round_data = db.get_negotiation_round(session_id)
     if not round_data:
         raise HTTPException(404, "No negotiation round active")
+
+    if user_id and "member_messages" in round_data:
+        personal_msg = round_data["member_messages"].get(user_id, round_data.get("proposal_message", ""))
+        return {**round_data, "proposal_message": personal_msg, "member_messages": None}
+
     return round_data
 
 
@@ -630,38 +670,36 @@ async def negotiate_response(session_id: str, user_id: str, body: NegotiateRespo
 
 
 async def _apply_negotiation_and_recheck(session_id: str, round_data: dict, responses: dict):
-    """Extract updated preferences from negotiation responses, save them, then re-check conflicts."""
+    """Extract updated preferences in parallel, save them, then re-check conflicts."""
     all_prefs = db.get_all_preferences(session_id)
     conflicts = round_data.get("conflicts", [])
+    loop = asyncio.get_event_loop()
 
-    def _do_extract():
-        updates = {}
-        for uid, response in responses.items():
-            pref_doc = all_prefs.get(uid, {})
-            original = pref_doc.get("preferences") or pref_doc.get("collected_so_far", {})
-            if not original:
-                continue
-            updated = gemma.extract_updated_preferences(original, conflicts, response)
-            if updated:
-                updates[uid] = updated
-        return updates
-
-    try:
-        pref_updates = await asyncio.get_event_loop().run_in_executor(None, _do_extract)
-    except Exception:
-        import traceback; traceback.print_exc()
-        pref_updates = {}
-
-    # Save updated preferences back to DB
-    for uid, new_prefs in pref_updates.items():
+    def _extract_one(uid: str) -> tuple[str, dict | None]:
+        response = responses.get(uid)
+        if not response:
+            return uid, None
         pref_doc = all_prefs.get(uid, {})
-        updated_doc = {**pref_doc, "preferences": new_prefs, "collected_so_far": new_prefs}
-        db.save_preferences(session_id, uid, updated_doc)
+        original = pref_doc.get("preferences") or pref_doc.get("collected_so_far", {})
+        if not original:
+            return uid, None
+        updated = gemma.extract_updated_preferences(original, conflicts, response)
+        return uid, updated
 
-    # Reset negotiation state so it can trigger again if needed
+    tasks = [loop.run_in_executor(None, _extract_one, uid) for uid in responses]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    for item in results:
+        if isinstance(item, Exception):
+            import traceback; traceback.print_exc()
+            continue
+        uid, new_prefs = item
+        if new_prefs:
+            pref_doc = all_prefs.get(uid, {})
+            updated_doc = {**pref_doc, "preferences": new_prefs, "collected_so_far": new_prefs}
+            db.save_preferences(session_id, uid, updated_doc)
+
     db.set_session_status(session_id, "collecting")
-
-    # Re-check: conflicts resolved? → aggregate; still conflicts? → new negotiation round
     await _check_and_proceed(session_id)
 
 

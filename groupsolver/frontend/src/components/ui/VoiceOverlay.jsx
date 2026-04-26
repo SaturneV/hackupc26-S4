@@ -39,11 +39,27 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
 
   const [isDone, setIsDone] = useState(false);
   const [sessionPhase, setSessionPhase] = useState('collecting'); // 'collecting', 'negotiating', 'success'
-  const [agentCards, setAgentCards] = useState([]); // [{from, text, conflict}]
+  const [agentCards, setAgentCards] = useState([]);
   const [showAutofill, setShowAutofill] = useState(false);
 
   const srRef = useRef(null);
   const initialized = useRef(false);
+
+  const speakText = (text) => {
+    if (!SS || !voiceOn) return;
+    try {
+      SS.cancel();
+      const cleanText = text.replace(/\*\*/g, '').replace(/#+\s*/g, '');
+      const utt = new SpeechSynthesisUtterance(cleanText);
+      utt.lang = 'en-US';
+      utt.onstart = () => setSpeaking(true);
+      utt.onend = () => setSpeaking(false);
+      utt.onerror = () => setSpeaking(false);
+      SS.speak(utt);
+    } catch(err) {
+      console.warn("Speech Synthesis failed:", err);
+    }
+  };
 
   const speakWhenReady = (text) => {
     if (!SS) return;
@@ -59,7 +75,6 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
   useEffect(() => {
     if (!initialized.current) {
       initialized.current = true;
-<<<<<<< HEAD
       const welcome = "Hey! Tell me when you're free to travel and what kind of trip you're into.";
       fetch(`${API}/session/${sessionId}`)
         .then(r => r.json())
@@ -78,9 +93,6 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
           setAgentMessage(welcome);
           speakWhenReady(welcome);
         });
-=======
-      handleSend("Hello!"); // Trigger the AI to ask the first question
->>>>>>> 47372ad14d3e43923d8e5f4448c8509ac7cfef4c
     }
   }, [sessionId, userId]);
 
@@ -127,32 +139,27 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
         const sessionData = await res.json();
 
         if (sessionData.status === 'success') {
-           const resultRes = await fetch(`${API}/session/${sessionId}/result`);
-           const resultData = await resultRes.json();
-           if (resultData.result && resultData.result.top_destinations) {
-              onDestinationsUpdate(resultData.result.top_destinations);
-<<<<<<< HEAD
-              setAgentMessage(resultData.result.recommendation || "We found your perfect destination!");
-              speakText(resultData.result.recommendation || "We found your perfect destination!");
-=======
-              setAgentMessage(resultData.result.recommendation || "We already have the results for the group!");
-              speakText(resultData.result.recommendation || "We already have the results for the group!");
->>>>>>> 47372ad14d3e43923d8e5f4448c8509ac7cfef4c
-              setSessionPhase('success');
-              isPolling = false;
-           }
+          const resultRes = await fetch(`${API}/session/${sessionId}/result`);
+          const resultData = await resultRes.json();
+          if (resultData.result && resultData.result.top_destinations) {
+            onDestinationsUpdate(resultData.result.top_destinations);
+            setAgentMessage(resultData.result.recommendation || "We found your perfect destination!");
+            speakText(resultData.result.recommendation || "We found your perfect destination!");
+            setSessionPhase('success');
+            isPolling = false;
+          }
         } else if (sessionData.status === 'negotiating') {
-           const negRes = await fetch(`${API}/session/${sessionId}/negotiation-round`);
-           const negData = await negRes.json();
+          const negRes = await fetch(`${API}/session/${sessionId}/negotiation-round?user_id=${userId}`);
+          const negData = await negRes.json();
 
-           // If user hasn't responded to this negotiation round
-           if (!negData.responses || !negData.responses[userId]) {
-              setAgentCards([]);
-              setAgentMessage(negData.proposal_message || '');
-              setSessionPhase('negotiating');
-              setIsDone(false);
-              isPolling = false;
-           }
+          if (!negData.responses || !negData.responses[userId]) {
+            setAgentCards([]);
+            setAgentMessage(negData.proposal_message || '');
+            speakText(negData.proposal_message || '');
+            setSessionPhase('negotiating');
+            setIsDone(false);
+            isPolling = false;
+          }
         }
       } catch (err) {
         console.error("Polling error:", err);
@@ -181,15 +188,9 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
         if (!res.ok) throw new Error(await res.text());
 
         setIsDone(true);
-<<<<<<< HEAD
         setSessionPhase('collecting');
         setAgentMessage("Response sent. Waiting for the other person...");
         speakText("Response sent. Waiting for the other person...");
-=======
-        setSessionPhase('collecting'); // It will go back to negotiating or success on the next poll
-        setAgentMessage("Response sent. Waiting for the rest of the group...");
-        speakText("Response sent. Waiting for the rest of the group...");
->>>>>>> 47372ad14d3e43923d8e5f4448c8509ac7cfef4c
       } else {
         const res = await fetch(`${API}/session/${sessionId}/member/${userId}/chat`, {
           method: 'POST',
@@ -215,31 +216,9 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
     }
   };
 
-  const speakText = (text) => {
-    if (!SS || !voiceOn) return;
-    try {
-      SS.cancel();
-      const cleanText = text.replace(/\*\*/g, '').replace(/#+\s*/g, '');
-      const utt = new SpeechSynthesisUtterance(cleanText);
-      utt.lang = 'en-US';
-
-      utt.onstart = () => setSpeaking(true);
-      utt.onend = () => setSpeaking(false);
-      utt.onerror = () => setSpeaking(false);
-
-      SS.speak(utt);
-    } catch(err) {
-      console.warn("Speech Synthesis failed:", err);
-    }
-  };
-
   const toggleListening = () => {
     if (!VOICE_SUPPORTED) {
-<<<<<<< HEAD
       alert("Your browser doesn't support the microphone. Use the text input below.");
-=======
-      alert("Your browser does not support the microphone. You can use the keyboard below.");
->>>>>>> 47372ad14d3e43923d8e5f4448c8509ac7cfef4c
       return;
     }
     try {
@@ -252,11 +231,7 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
       }
     } catch (err) {
       console.warn("Microphone access error:", err);
-<<<<<<< HEAD
       alert("Microphone error (possibly insecure HTTP connection). Use the text input instead.");
-=======
-      alert("Error accessing the microphone (possibly due to insecure HTTP connection). Use the keyboard.");
->>>>>>> 47372ad14d3e43923d8e5f4448c8509ac7cfef4c
       setListening(false);
     }
   };
@@ -312,37 +287,7 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
       {/* Subtitles & Status */}
       <div className="w-full max-w-3xl mx-auto px-4 md:px-8 pb-8 flex flex-col items-center">
         <AnimatePresence mode="wait">
-          {sessionPhase === 'negotiating' && agentCards.length > 0 ? (
-            <motion.div
-              key="agent-cards"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              className="mb-6 w-full flex flex-col gap-2"
-            >
-              {agentCards.map((card, i) => (
-                <motion.div
-                  key={i}
-                  initial={{ opacity: 0, x: -10 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: i * 0.08 }}
-                  className={clsx(
-                    "flex items-start gap-3 px-4 py-3 rounded-xl backdrop-blur-md border text-sm",
-                    card.conflict
-                      ? "bg-red-500/10 border-red-500/30 text-red-200"
-                      : "bg-emerald-500/10 border-emerald-500/30 text-emerald-200"
-                  )}
-                >
-                  <span className={clsx(
-                    "shrink-0 w-2 h-2 rounded-full mt-1.5",
-                    card.conflict ? "bg-red-400" : "bg-emerald-400"
-                  )} />
-                  <span>{card.text}</span>
-                </motion.div>
-              ))}
-              <p className="text-center text-slate-400 text-xs mt-1">Tell us what you're willing to change</p>
-            </motion.div>
-          ) : agentMessage ? (
+          {agentMessage ? (
             <motion.div
               key="subtitle"
               initial={{ opacity: 0, y: 10 }}
@@ -435,11 +380,7 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
                 type="text"
                 value={textInput}
                 onChange={e => setTextInput(e.target.value)}
-<<<<<<< HEAD
                 placeholder="Type your answer here..."
-=======
-                placeholder="Write your answer here..."
->>>>>>> 47372ad14d3e43923d8e5f4448c8509ac7cfef4c
                 disabled={loading}
                 className="flex-1 bg-black/40 border border-white/20 rounded-full px-5 py-3 text-white focus:outline-none focus:ring-2 focus:ring-sky-500/50 backdrop-blur-md placeholder:text-slate-400 text-sm md:text-base"
               />
@@ -455,21 +396,13 @@ export default function VoiceOverlay({ sessionId, userId, onDestinationsUpdate }
 
           {isDone && sessionPhase !== 'success' && (
             <div className="text-emerald-400 text-sm font-medium bg-emerald-400/10 px-4 py-2 rounded-full border border-emerald-400/20 mt-2">
-<<<<<<< HEAD
               {sessionPhase === 'collecting' ? 'Preferences saved! Waiting for the other person...' : 'Waiting for the other person...'}
-=======
-              {sessionPhase === 'collecting' ? 'Preferences saved! Waiting for the rest of the group...' : 'Waiting for the rest of the group...'}
->>>>>>> 47372ad14d3e43923d8e5f4448c8509ac7cfef4c
             </div>
           )}
 
           {sessionPhase === 'success' && (
             <div className="text-emerald-400 text-sm font-medium bg-emerald-400/10 px-4 py-2 rounded-full border border-emerald-400/20 mt-2">
-<<<<<<< HEAD
               Destination found! Zoom in on the globe.
-=======
-              Destinations found! Zoom in on the globe.
->>>>>>> 47372ad14d3e43923d8e5f4448c8509ac7cfef4c
             </div>
           )}
         </div>

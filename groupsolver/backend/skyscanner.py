@@ -29,11 +29,11 @@ MOCK_DESTINATIONS = [
 
 
 def get_flights(origin: str = "MAD", depart_date: str | None = None,
-                budget: int = 9999) -> list[dict]:
+                budget: int = 9999, adults: int = 1) -> list[dict]:
     if not SKYSCANNER_API_KEY:
         return _mock_flights(budget, origin)
     try:
-        return _real_flights(origin, depart_date or str(date.today()), budget)
+        return _real_flights(origin, depart_date or str(date.today()), budget, adults)
     except Exception as e:
         print(f"[Skyscanner] real API failed: {e}, falling back to mock")
         return _mock_flights(budget, origin)
@@ -59,7 +59,7 @@ def _mock_flights(budget: int, origin: str = "MAD") -> list[dict]:
     return results
 
 
-def _real_flights(origin: str, depart_date: str, budget: int) -> list[dict]:
+def _real_flights(origin: str, depart_date: str, budget: int, adults: int = 1) -> list[dict]:
     import time
     CREATE_URL = "https://partners.api.skyscanner.net/apiservices/v3/flights/live/search/create"
     POLL_URL   = "https://partners.api.skyscanner.net/apiservices/v3/flights/live/search/poll/{token}"
@@ -80,7 +80,7 @@ def _real_flights(origin: str, depart_date: str, budget: int) -> list[dict]:
                     },
                 }
             ],
-            "adults": 1,
+            "adults": adults,
             "cabinClass": "CABIN_CLASS_ECONOMY",
         }
     }

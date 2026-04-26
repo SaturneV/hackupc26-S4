@@ -165,7 +165,19 @@ def check_all_done(session_id: str) -> bool:
     if len(members) != member_count or member_count == 0:
         return False
     prefs = get_all_preferences(session_id)
-    return all(prefs.get(uid, {}).get("status") == "done" for uid in members)
+    for uid in members:
+        pref_doc = prefs.get(uid, {})
+        if pref_doc.get("status") != "done":
+            return False
+        # Validate that preferences have all required fields
+        prefs_data = pref_doc.get("preferences", {})
+        if not prefs_data or not all([
+            prefs_data.get("available_dates"),
+            prefs_data.get("max_budget_flight") is not None,
+            prefs_data.get("trip_type"),
+        ]):
+            return False
+    return True
 
 
 # ── Result ───────────────────────────────────────────────────────────────────
