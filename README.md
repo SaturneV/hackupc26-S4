@@ -6,6 +6,17 @@
 - Docker & Docker Compose (optional)
 
 ## Option 1: Quick Start (Local)
+
+**IMPORTANT: You must launch Ollama in a separate terminal first!**
+
+**Terminal 1 - Start Ollama:**
+```bash
+# Install Ollama: https://ollama.ai
+ollama pull gemma2:2b  # Downloads ~1.6GB model (~2 min on first run)
+ollama serve
+```
+
+**Terminal 2 - Start the application:**
 ```bash
 cd groupsolver
 bash start.sh
@@ -16,10 +27,18 @@ Then open:
 - **Backend API Docs**: http://localhost:8000/docs
 
 ## Option 2: Docker (Recommended)
+
+**Ollama is included automatically!**
+
 ```bash
 cd groupsolver
 docker-compose up
 ```
+
+Docker-compose automatically:
+- ✓ Launches Ollama service
+- ✓ Starts FastAPI backend (depends on Ollama)
+- ✓ Starts Vite frontend (depends on backend)
 
 Then open:
 - **Frontend**: http://localhost:5173
