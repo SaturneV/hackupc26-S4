@@ -127,52 +127,141 @@ _COLLECTION_TOOLS = [
     },
 ]
 
-_COLLECTION_SYSTEM = """You are a friend chatting about an upcoming trip you're planning together. You're excited and curious — NOT running a form or interview.
+_COLLECTION_SYSTEM = """You are a friendly travel assistant helping someone plan a group trip.
 
-Your hidden goal: figure out three things naturally through conversation:
-1. When is the person free to travel? (available_dates)
-2. How much would they want to spend on the flight? (max_budget_flight)
-3. What kind of trip vibe are they into? (trip_type — e.g. beach, city, nature, culture, adventure)
+You need exactly 3 things from the user. Ask ONLY for what is still missing:
+- MISSING: {missing_fields}
+- ALREADY HAVE: {collected_so_far}
 
-Rules:
-- Always reply in English.
-- Talk like a real person. React to what they say. Be warm, funny, genuine.
-- Never list questions. Ask one thing at a time, embedded in a natural sentence.
-- If they mention something relevant (like "I have two weeks off in July"), react to that first, then gently steer.
-- Use save_preference the moment you extract a piece of info.
-- Once all 3 are collected, call mark_complete().
-- Don't say "I need to collect..." or "As a travel assistant...". Just be their friend planning the trip.
+RULES:
+1. NEVER re-ask for something already in "ALREADY HAVE". Never. Not even to confirm.
+2. If missing_fields is empty [], immediately write your confirmation and end with [DONE].
+3. Ask for ALL missing fields in ONE short message (2-3 sentences max).
+4. Be casual and warm, not robotic.
+5. When the user answers, extract their info and if you now have everything, confirm briefly then end with [DONE] on its own line.
+6. [DONE] means you have: travel dates, flight budget, and trip type. Nothing else required.
 
-Already know: {collected_so_far}
-Still figuring out: {missing_fields}"""
+Example when all collected:
+"Perfect! I've got everything I need — you're free April 14-21, budget €400, and you're into beach vibes. [DONE]"
+
+The 3 fields:
+- travel dates (when are they free, start and end date)
+- flight budget (max euros for the flight)
+- trip type (beach / city / nature / culture / adventure)"""
+
+
+_MONTHS = {
+    "enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 6,
+    "julio": 7, "agosto": 8, "septiembre": 9, "octubre": 10, "noviembre": 11, "diciembre": 12,
+    "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
+    "july": 7, "august": 8, "september": 9, "october": 10, "november": 11, "december": 12,
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "jun": 6, "jul": 7,
+    "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+
+def _parse_natural_dates(text: str) -> dict | None:
+    """Parse natural language dates in Spanish and English into {start, end}."""
+    from datetime import date as _date
+    year = _date.today().year
+    t = text.lower()
+
+    # YYYY-MM-DD (strict ISO)
+    iso = re.findall(r"\d{4}-\d{2}-\d{2}", t)
+    if len(iso) >= 2:
+        return {"start": iso[0], "end": iso[1]}
+    if len(iso) == 1:
+        return {"start": iso[0], "end": iso[0]}
+
+    # "del 14 al 21 de abril" / "from 14 to 21 april" / "14-21 april"
+    month_pat = "(" + "|".join(_MONTHS.keys()) + ")"
+    m = re.search(
+        rf"(?:del?|from|entre)?\s*(\d{{1,2}})\s*(?:al?|to|-|–)\s*(\d{{1,2}})\s*(?:de\s*)?{month_pat}",
+        t,
+    )
+    if m:
+        d1, d2, mon = int(m.group(1)), int(m.group(2)), _MONTHS[m.group(3)]
+        try:
+            return {
+                "start": _date(year, mon, d1).isoformat(),
+                "end":   _date(year, mon, d2).isoformat(),
+            }
+        except ValueError:
+            pass
+
+    # "14 abril - 21 abril" / "april 14 to april 21"
+    m = re.search(
+        rf"(\d{{1,2}})\s*(?:de\s*)?{month_pat}\s*(?:al?|to|-|–)\s*(\d{{1,2}})\s*(?:de\s*)?{month_pat}",
+        t,
+    )
+    if m:
+        d1, mon1, d2, mon2 = int(m.group(1)), _MONTHS[m.group(2)], int(m.group(3)), _MONTHS[m.group(4)]
+        try:
+            return {
+                "start": _date(year, mon1, d1).isoformat(),
+                "end":   _date(year, mon2, d2).isoformat(),
+            }
+        except ValueError:
+            pass
+
+    # "april 14" / "14 de abril" (single date)
+    m = re.search(rf"(\d{{1,2}})\s*(?:de\s*)?{month_pat}", t)
+    if not m:
+        m = re.search(rf"{month_pat}\s*(\d{{1,2}})", t)
+        if m:
+            mon, day = _MONTHS[m.group(1)], int(m.group(2))
+        else:
+            mon = day = None
+    else:
+        day, mon = int(m.group(1)), _MONTHS[m.group(2)]
+    if day and mon:
+        try:
+            d = _date(year, mon, day).isoformat()
+            return {"start": d, "end": d}
+        except ValueError:
+            pass
+
+    # "next week", "semana que viene", "semana santa" (approximate)
+    from datetime import timedelta
+    today = _date.today()
+    if re.search(r"next week|semana que viene|la semana que viene", t):
+        start = today + timedelta(days=(7 - today.weekday()))
+        return {"start": start.isoformat(), "end": (start + timedelta(days=6)).isoformat()}
+    if re.search(r"semana santa|easter", t):
+        return {"start": f"{year}-04-14", "end": f"{year}-04-21"}
+    if re.search(r"verano|summer", t):
+        return {"start": f"{year}-07-01", "end": f"{year}-07-31"}
+
+    return None
 
 
 def _extract_prefs_from_text(user_message: str, bot_reply: str) -> dict:
-    """Fallback extractor for small models that don't call tools reliably."""
+    """Flexible extractor for models that don't call tools reliably."""
     combined = (user_message + " " + bot_reply).lower()
     partial = {}
 
-    # Dates: look for YYYY-MM-DD pairs
-    date_matches = re.findall(r"\d{4}-\d{2}-\d{2}", combined)
-    if len(date_matches) >= 2:
-        partial["available_dates"] = {"start": date_matches[0], "end": date_matches[1]}
-    elif len(date_matches) == 1:
-        partial["available_dates"] = {"start": date_matches[0], "end": date_matches[0]}
+    # Dates: natural language + ISO
+    dates = _parse_natural_dates(combined)
+    if dates:
+        partial["available_dates"] = dates
 
-    # Budget: look for numbers near euro/budget keywords
-    budget_match = re.search(r"(\d+)\s*(?:€|eur|euros?)", combined)
-    if not budget_match:
-        budget_match = re.search(r"(?:budget|spend|cost|price)[^\d]*(\d+)", combined)
+    # Budget: flexible — "400€", "400 euros", "budget 400", "máximo 400", "hasta 400", "unos 400"
+    budget_match = (
+        re.search(r"(\d+)\s*(?:€|eur|euros?)", combined) or
+        re.search(r"(?:budget|spend|cost|price|presupuesto|gasto|máximo|maximo|hasta|unos?|around|about)[^\d]*(\d+)", combined) or
+        re.search(r"\b([1-9]\d{2,3})\b", combined)  # any 3-4 digit number as last resort
+    )
     if budget_match:
-        partial["max_budget_flight"] = int(budget_match.group(1))
+        val = int(budget_match.group(1))
+        if 50 <= val <= 9999:
+            partial["max_budget_flight"] = val
 
-    # Trip type: keyword scan
+    # Trip type: Spanish + English keywords
     type_keywords = {
-        "city": ["city", "urban", "ciudad", "metropol"],
-        "beach": ["beach", "playa", "sea", "mar", "coast"],
-        "nature": ["nature", "naturaleza", "mountain", "montaña", "hiking", "forest"],
-        "culture": ["culture", "cultura", "museum", "history", "historia", "art"],
-        "adventure": ["adventure", "aventura", "extreme", "sport", "activ"],
+        "city":      ["city", "urban", "ciudad", "metropol", "cities", "capital", "capitals"],
+        "beach":     ["beach", "playa", "sea", "mar ", "coast", "coastal", "sand", "sol", "swimm"],
+        "nature":    ["nature", "naturaleza", "mountain", "montaña", "hiking", "forest", "rural", "parque", "campo"],
+        "culture":   ["culture", "cultura", "museum", "museo", "history", "historia", "art", "arte", "arquitectura"],
+        "adventure": ["adventure", "aventura", "extreme", "sport", "activ", "ski", "climb", "escalar"],
     }
     found_types = [t for t, kws in type_keywords.items() if any(k in combined for k in kws)]
     if found_types:
@@ -206,22 +295,13 @@ def chat_turn(
     complete = False
     reply_text = ""
 
-    # Agentic loop: keep going while the model wants to call tools
-    for _ in range(8):  # max 8 tool iterations per turn
-        response_msg = _ollama_chat(system, messages, tools=_COLLECTION_TOOLS)
-        tool_calls = response_msg.get("tool_calls", [])
+    # Single LLM call — gemma3 doesn't do tool loops
+    response_msg = _ollama_chat(system, messages, tools=_COLLECTION_TOOLS)
+    tool_calls = response_msg.get("tool_calls", [])
 
-        if not tool_calls:
-            reply_text = response_msg.get("content", "").strip()
-            reply_text = _strip_comment_blocks(reply_text)
-            # Fallback: small models may not call tools, try to extract from text
-            if not partial and not complete:
-                partial.update(_extract_prefs_from_text(user_message, reply_text))
-            break
-
-        # Process each tool call
-        messages.append(response_msg)  # add assistant message with tool_calls
-
+    if tool_calls:
+        # Tool-capable models (non-gemma): process tool calls
+        messages.append(response_msg)
         for call in tool_calls:
             fn = call.get("function", {})
             name = fn.get("name", "")
@@ -231,40 +311,48 @@ def chat_turn(
                     args = json.loads(args)
                 except Exception:
                     args = {}
-
-            tool_result = "ok"
-
             if name == "save_preference":
-                field = args.get("field")
-                value = args.get("value")
+                field, value = args.get("field"), args.get("value")
                 if field and value is not None:
                     partial[field] = value
-
             elif name == "mark_complete":
                 complete = True
-                tool_result = "All preferences collected. Proceed to confirmation."
-
-            elif name == "ask_clarification":
-                # The question becomes the reply — we'll let the model reply naturally
-                tool_result = "Clarification question registered."
-
-            messages.append({
-                "role": "tool",
-                "content": tool_result,
-            })
-
+            messages.append({"role": "tool", "content": "ok"})
         if complete:
-            # Ask model for a confirmation message
-            messages.append({"role": "user", "content": "__confirm__"})
             final_msg = _ollama_chat(system, messages)
             reply_text = _strip_comment_blocks(final_msg.get("content", "Perfect, I have everything I need!"))
-            break
+        else:
+            followup = _ollama_chat(system, messages)
+            reply_text = _strip_comment_blocks(followup.get("content", ""))
+    else:
+        # Text-only path (gemma3): extract from full conversation context
+        reply_text = response_msg.get("content", "").strip()
+        reply_text = _strip_comment_blocks(reply_text)
+
+        # Extract from the user's message + entire history for maximum recall
+        all_user_text = user_message + " " + " ".join(
+            msg["parts"][0] for msg in history if msg["role"] == "user"
+        )
+        extracted = _extract_prefs_from_text(all_user_text, reply_text)
+        for k, v in extracted.items():
+            if k not in partial:
+                partial[k] = v
+
+        # Detect [DONE] marker the model was instructed to output
+        if "[DONE]" in reply_text:
+            complete = True
+            reply_text = reply_text.replace("[DONE]", "").strip()
 
     # Build final preferences if complete
     merged = {**collected_so_far, **partial}
     final_prefs = None
 
-    if complete and all(f in merged for f in ["available_dates", "max_budget_flight", "trip_type"]):
+    # Auto-complete when all 3 fields are present (works for any model)
+    _required = ["available_dates", "max_budget_flight", "trip_type"]
+    if not complete and all(f in merged for f in _required):
+        complete = True
+
+    if complete and all(f in merged for f in _required):
         dates = merged.get("available_dates", {})
         trip_duration = 0
         if dates.get("start") and dates.get("end"):
@@ -325,6 +413,60 @@ Rules:
 - Never say "group", "team", or "everyone" — there are only two people.
 - Be casual and direct. No bullet points, no lists.
 - Keep it under 3 sentences."""
+
+
+_PERSONAL_NEGOTIATION_SYSTEM = """You are a friendly travel mediator helping a group plan a trip together.
+
+You are speaking directly and ONLY to {member_name}.
+
+Their preferences:
+{member_prefs_json}
+
+The other group members and their preferences:
+{others_json}
+
+Conflicts detected:
+{conflicts_json}
+
+Write a short, personal message (2-3 sentences max) addressed directly to {member_name} that:
+1. Opens with their first name
+2. Names their specific conflict with the others (e.g. "you want beach but Ana wants city")
+3. Proposes a concrete compromise they might consider (e.g. "would a coastal city like Barcelona work for you?")
+
+Rules:
+- Address only {member_name} — never say "everyone" or "the group"
+- Be casual, warm, and direct
+- Suggest an actual destination or middle-ground if possible
+- Keep it under 3 sentences"""
+
+
+def negotiate_for_member(
+    member_uid: str,
+    member_name: str,
+    member_prefs: dict,
+    all_members: dict,
+    conflicts: list[str],
+    round_num: int = 1,
+) -> str:
+    """Generate a personalized negotiation message for a single member."""
+    others = {uid: info for uid, info in all_members.items() if uid != member_uid}
+    system = _PERSONAL_NEGOTIATION_SYSTEM.format(
+        member_name=member_name,
+        member_prefs_json=json.dumps(member_prefs, ensure_ascii=False, indent=2),
+        others_json=json.dumps(others, ensure_ascii=False, indent=2),
+        conflicts_json=json.dumps(conflicts, ensure_ascii=False, indent=2),
+    )
+    try:
+        msg = _ollama_chat(system, [
+            {"role": "user", "content": f"Round {round_num}: write my personal negotiation message."}
+        ])
+        return _strip_comment_blocks(msg.get("content", ""))
+    except Exception:
+        conflict_summary = "; ".join(conflicts)
+        return (
+            f"Hey {member_name}, we found some conflicts: {conflict_summary}. "
+            "What would you be willing to adjust?"
+        )
 
 
 def negotiate(members: dict, conflicts: list[str], round_num: int = 1) -> str:

@@ -77,7 +77,7 @@ export default function Chat({ sessionId, userId, onDone }) {
   const loadNegotiationRound = async () => {
     if (negotiationShown) return
     try {
-      const res = await fetch(`${API}/session/${sessionId}/negotiation-round`)
+      const res = await fetch(`${API}/session/${sessionId}/negotiation-round?user_id=${userId}`)
       if (!res.ok) return
       const data = await res.json()
       if (data.proposal_message) {
